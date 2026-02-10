@@ -10,6 +10,7 @@ handling:
 
 import asyncio
 import json
+import ssl
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from collections import deque
@@ -55,6 +56,7 @@ class SolarControlClient:
         max_reconnect_delay: float = 30.0,
         ping_interval: float = 25.0,
         max_queue_size: int = 1000,
+        insecure: bool = False,
     ):
         self.control_url = control_url
         self.api_key = api_key  # Used to identify this host to solar-control
@@ -63,6 +65,7 @@ class SolarControlClient:
         self.max_reconnect_delay = max_reconnect_delay
         self.ping_interval = ping_interval
         self.max_queue_size = max_queue_size
+        self.insecure = insecure
 
         # Host ID assigned by solar-control after registration
         self.host_id: Optional[str] = None
@@ -159,7 +162,14 @@ class SolarControlClient:
         if not HAS_WEBSOCKETS or websockets is None:
             return
 
-        async with websockets.connect(self.control_url) as ws:
+        # Build SSL context for wss:// connections with bad/self-signed certs
+        ssl_context = None
+        if self.insecure and self.control_url.startswith("wss://"):
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+        async with websockets.connect(self.control_url, ssl=ssl_context) as ws:
             self._ws = ws
             print(f"SolarControlClient: Connected to {self.control_url}")
 
@@ -441,6 +451,7 @@ def init_clients(settings) -> List[SolarControlClient]:
             reconnect_delay=settings.ws_reconnect_delay,
             max_reconnect_delay=settings.ws_reconnect_max_delay,
             ping_interval=settings.ws_ping_interval,
+            insecure=settings.insecure,
         )
         solar_control_clients.append(client)
 

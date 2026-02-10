@@ -30,6 +30,8 @@ async def lifespan(app: FastAPI):
     # Startup: Auto-restart instances that were running
     print("Starting Solar Host...")
     print(f"API Key configured: {settings.api_key[:4]}...")
+    if settings.insecure:
+        print("WARNING: INSECURE mode enabled - TLS certificate verification is disabled")
 
     # Initialize and start solar-control WebSocket clients
     clients = init_clients(settings)

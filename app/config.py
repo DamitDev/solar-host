@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     ws_reconnect_max_delay: float = 30.0  # Maximum reconnect delay
     ws_ping_interval: float = 25.0  # Ping interval in seconds
 
+    # Allow connecting to solar-control over HTTPS/WSS with invalid certificates
+    insecure: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
