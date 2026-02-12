@@ -385,6 +385,16 @@ class ProcessManager:
         if instance.status == InstanceStatus.STOPPED:
             return True
 
+        # For failed instances, just transition to stopped cleanly
+        if instance.status == InstanceStatus.FAILED:
+            instance.status = InstanceStatus.STOPPED
+            instance.pid = None
+            instance.started_at = None
+            instance.error_message = None
+            config_manager.update_instance(instance_id, instance)
+            self._push_instances_update()
+            return True
+
         instance.status = InstanceStatus.STOPPING
         config_manager.update_instance(instance_id, instance)
 

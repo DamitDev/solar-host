@@ -52,7 +52,7 @@ async def update_instance(instance_id: str, data: InstanceUpdate):
     if not instance:
         raise HTTPException(status_code=404, detail="Instance not found")
 
-    if instance.status != InstanceStatus.STOPPED:
+    if instance.status not in (InstanceStatus.STOPPED, InstanceStatus.FAILED):
         raise HTTPException(
             status_code=400, detail="Cannot update running instance. Stop it first."
         )
@@ -79,7 +79,7 @@ async def delete_instance(instance_id: str):
     if not instance:
         raise HTTPException(status_code=404, detail="Instance not found")
 
-    if instance.status != InstanceStatus.STOPPED:
+    if instance.status not in (InstanceStatus.STOPPED, InstanceStatus.FAILED):
         raise HTTPException(
             status_code=400, detail="Cannot delete running instance. Stop it first."
         )
