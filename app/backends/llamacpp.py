@@ -81,6 +81,10 @@ class LlamaCppRunner(BackendRunner):
         else:
             cmd.extend(["--jinja"])
 
+        chat_template_kwargs = getattr(config, "chat_template_kwargs", None)
+        if chat_template_kwargs and chat_template_kwargs.strip():
+            cmd.extend(["--chat-template-kwargs", chat_template_kwargs.strip()])
+
         if getattr(config, "special", False):
             cmd.append("--special")
 

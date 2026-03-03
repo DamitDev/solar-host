@@ -33,6 +33,9 @@ class LlamaCppConfig(BaseModel):
     chat_template_file: Optional[str] = Field(
         default=None, description="Path to Jinja chat template"
     )
+    chat_template_kwargs: Optional[str] = Field(
+        default=None, description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')"
+    )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
     port: Optional[int] = Field(
         default=None, description="Port (auto-assigned if not specified)"
