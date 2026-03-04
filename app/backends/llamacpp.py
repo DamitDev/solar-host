@@ -87,7 +87,7 @@ class LlamaCppRunner(BackendRunner):
 
         reasoning_budget = getattr(config, "reasoning_budget", None)
         if reasoning_budget is not None:
-            cmd.extend(["--reasoning-budget", str(reasoning_budget)])
+            cmd.extend(["--reasoning-budget", str(int(reasoning_budget))])
 
         if getattr(config, "special", False):
             cmd.append("--special")
