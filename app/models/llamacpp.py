@@ -36,6 +36,9 @@ class LlamaCppConfig(BaseModel):
     chat_template_kwargs: Optional[str] = Field(
         default=None, description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')"
     )
+    reasoning_budget: Optional[int] = Field(
+        default=None, description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)"
+    )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
     port: Optional[int] = Field(
         default=None, description="Port (auto-assigned if not specified)"
