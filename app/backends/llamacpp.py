@@ -97,6 +97,18 @@ class LlamaCppRunner(BackendRunner):
         if cache_type_v and cache_type_v.strip():
             cmd.extend(["-ctv", cache_type_v.strip()])
 
+        rope_scaling = getattr(config, "rope_scaling", None)
+        if rope_scaling and rope_scaling.strip():
+            cmd.extend(["--rope-scaling", rope_scaling.strip()])
+
+        rope_scale = getattr(config, "rope_scale", None)
+        if rope_scale is not None:
+            cmd.extend(["--rope-scale", str(rope_scale)])
+
+        yarn_orig_ctx = getattr(config, "yarn_orig_ctx", None)
+        if yarn_orig_ctx is not None:
+            cmd.extend(["--yarn-orig-ctx", str(int(yarn_orig_ctx))])
+
         if getattr(config, "special", False):
             cmd.append("--special")
 
