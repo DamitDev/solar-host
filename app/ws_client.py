@@ -22,15 +22,26 @@ except ImportError:
 
 
 def _to_http_url(ws_url: str) -> str:
-    """Convert WebSocket URL to HTTP base URL for Socket.IO."""
+    """Convert a WebSocket or HTTP URL to an HTTP base URL for Socket.IO.
+
+    Strips any path component since Socket.IO only needs scheme://host:port.
+    Handles backward-compat ws:// URLs like ``ws://host:8015/ws/host-channel``.
+    """
+    from urllib.parse import urlparse
+
     url = ws_url.strip()
     if url.startswith("wss://"):
-        return "https://" + url[6:]
-    if url.startswith("ws://"):
-        return "http://" + url[5:]
-    if url.startswith("https://") or url.startswith("http://"):
-        return url
-    return "http://" + url
+        url = "https://" + url[6:]
+    elif url.startswith("ws://"):
+        url = "http://" + url[5:]
+    elif not (url.startswith("http://") or url.startswith("https://")):
+        url = "http://" + url
+
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        base += f":{parsed.port}"
+    return base
 
 
 class SolarControlClient:
