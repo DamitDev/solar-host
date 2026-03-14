@@ -94,6 +94,7 @@ class SolarControlClient:
             return
 
         self._running = True
+        self._main_loop = asyncio.get_running_loop()
         self._connection_task = asyncio.create_task(self._run())
         print(f"SolarControlClient: Starting connection to {self.base_url}")
 
