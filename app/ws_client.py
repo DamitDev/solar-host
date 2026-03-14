@@ -179,13 +179,20 @@ class SolarControlClient:
         self.host_id = None
 
     def _on_registration_ack(self, data: dict):
-        """Handle registration_ack from server."""
+        """Handle registration_ack from server.
+
+        If we were pending, this means the admin just approved us --
+        re-send registration + health so solar-control has fresh data.
+        """
+        was_pending = self._pending
         self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
         print(
             f"SolarControlClient: Registered as '{host_name}' (id: {self.host_id})"
         )
+        if was_pending:
+            asyncio.create_task(self._post_approval_sync())
 
     def _on_pending(self, data: dict):
         """Handle pending event - host is waiting for admin approval."""
@@ -230,6 +237,16 @@ class SolarControlClient:
             },
             namespace=self.NAMESPACE,
         )
+
+    async def _post_approval_sync(self):
+        """Re-send registration, instance states, and health after approval.
+
+        Events sent while pending were silently dropped by solar-control,
+        so we push a full snapshot now.
+        """
+        await self._send_registration()
+        await self.send_instances_update()
+        await self.send_health()
 
     async def _emit(self, event: str, data: dict):
         """Emit event to solar-control (no-op if disconnected)."""
