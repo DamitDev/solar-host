@@ -72,6 +72,7 @@ class SolarControlClient:
 
         self._sio: Optional["socketio.AsyncClient"] = None
         self._connected = False
+        self._pending = False
         self._running = False
         self._connection_task: Optional[Any] = None
 
@@ -147,7 +148,7 @@ class SolarControlClient:
                 await sio.connect(
                     self.base_url,
                     namespaces=[self.NAMESPACE],
-                    auth={"api_key": self.api_key},
+                    auth={"api_key": self.api_key, "host_name": self.host_name},
                     socketio_path="socket.io",
                 )
                 # Wait until disconnected
@@ -174,15 +175,30 @@ class SolarControlClient:
     def _on_disconnect(self):
         """Called when disconnected."""
         self._connected = False
+        self._pending = False
         self.host_id = None
 
     def _on_registration_ack(self, data: dict):
         """Handle registration_ack from server."""
+        self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
         print(
             f"SolarControlClient: Registered as '{host_name}' (id: {self.host_id})"
         )
+
+    def _on_pending(self, data: dict):
+        """Handle pending event - host is waiting for admin approval."""
+        self._pending = True
+        print(
+            f"SolarControlClient: Waiting for admin approval (pending_id: {data.get('pending_id', '?')})"
+        )
+
+    def _on_rejected(self, data: dict):
+        """Handle rejected event - admin rejected this host."""
+        self._pending = False
+        reason = data.get("reason", "No reason given")
+        print(f"SolarControlClient: Registration rejected: {reason}")
 
     async def _send_registration(self):
         """Send registration event with instance list."""
@@ -334,6 +350,12 @@ if HAS_SOCKETIO and socketio is not None:
 
         def on_registration_ack(self, data):
             self._client._on_registration_ack(data or {})
+
+        def on_pending(self, data):
+            self._client._on_pending(data or {})
+
+        def on_rejected(self, data):
+            self._client._on_rejected(data or {})
 
 
 # Global client instances (initialized in main.py)
