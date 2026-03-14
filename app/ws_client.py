@@ -119,21 +119,28 @@ class SolarControlClient:
 
     async def _run(self):
         """Create client, register handlers, connect and keep running."""
+        ssl_verify = not self.insecure
+        http_session = None
+
+        if self.insecure and self.base_url.startswith("https://"):
+            import aiohttp
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            connector = aiohttp.TCPConnector(ssl=ctx)
+            http_session = aiohttp.ClientSession(connector=connector)
+
         sio = socketio.AsyncClient(
             reconnection=True,
             reconnection_attempts=0,  # Infinite
             reconnection_delay=1.0,
             reconnection_delay_max=30.0,
+            ssl_verify=ssl_verify,
+            http_session=http_session,
         )
 
         sio.register_namespace(_HostNamespace(self))
         self._sio = sio  # Set before connect so _on_connect can emit
-
-        ssl_context = None
-        if self.insecure and self.base_url.startswith("https://"):
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
 
         while self._running:
             try:
@@ -142,7 +149,6 @@ class SolarControlClient:
                     namespaces=[self.NAMESPACE],
                     auth={"api_key": self.api_key},
                     socketio_path="socket.io",
-                    ssl=ssl_context,
                 )
                 # Wait until disconnected
                 await sio.wait()
@@ -154,6 +160,9 @@ class SolarControlClient:
 
         if sio.connected:
             await sio.disconnect()
+
+        if http_session:
+            await http_session.close()
 
     def _on_connect(self):
         """Called when connected to /hosts namespace."""
