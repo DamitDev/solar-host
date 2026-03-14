@@ -89,6 +89,14 @@ class LlamaCppRunner(BackendRunner):
         if reasoning_budget is not None:
             cmd.extend(["--reasoning-budget", str(int(reasoning_budget))])
 
+        cache_type_k = getattr(config, "cache_type_k", None)
+        if cache_type_k and cache_type_k.strip():
+            cmd.extend(["-ctk", cache_type_k.strip()])
+
+        cache_type_v = getattr(config, "cache_type_v", None)
+        if cache_type_v and cache_type_v.strip():
+            cmd.extend(["-ctv", cache_type_v.strip()])
+
         if getattr(config, "special", False):
             cmd.append("--special")
 

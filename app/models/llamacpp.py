@@ -39,6 +39,12 @@ class LlamaCppConfig(BaseModel):
     reasoning_budget: Optional[int] = Field(
         default=None, description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)"
     )
+    cache_type_k: Optional[Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]] = Field(
+        default=None, description="KV cache quantization type for keys (-ctk)"
+    )
+    cache_type_v: Optional[Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]] = Field(
+        default=None, description="KV cache quantization type for values (-ctv)"
+    )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
     port: Optional[int] = Field(
         default=None, description="Port (auto-assigned if not specified)"
