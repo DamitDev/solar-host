@@ -9,6 +9,8 @@ A multi-backend process manager for model inference servers with REST API and We
   - HuggingFace AutoModelForCausalLM for text generation
   - HuggingFace AutoModelForSequenceClassification for classification
   - HuggingFace AutoModel for embeddings (last hidden state with mean pooling)
+- **Socket.IO control client** - Connects to solar-control’s `/hosts` namespace for registration, heartbeat, and instance lifecycle (start/stop/restart, config updates). Supports pending-host and rejection events with post-approval sync.
+- **Robust instance lifecycle** - Non-blocking process wait, state re-check after startup to avoid start/stop races, and full cleanup of log/state buffers on stop or delete.
 - Auto-assign ports starting from 3500
 - Persistent configuration with auto-restart on boot
 - Real-time log streaming via WebSocket
@@ -42,7 +44,15 @@ Create a `.env` file in the `solar-host/` directory:
 API_KEY=your-secret-key-here
 HOST=0.0.0.0
 PORT=8001
+
+# Solar-control connection (for Socket.IO registration and lifecycle)
+SOLAR_CONTROL_URL=http://localhost:8000
+SOLAR_CONTROL_API_KEY=your-solar-control-management-api-key
 ```
+
+- **API_KEY** - Used by solar-control (and other callers) to access this host’s REST API.
+- **SOLAR_CONTROL_URL** - Base URL of solar-control (HTTP; Socket.IO connects to the same origin).
+- **SOLAR_CONTROL_API_KEY** - Management API key from solar-control. The host uses it to connect to the `/hosts` namespace; it must be approved via the management API or WebUI before it appears in the gateway pool.
 
 ### 2. Start the server
 
@@ -474,11 +484,18 @@ pip install torch transformers accelerate
 
 ## Integration with Solar Control
 
-Register this host with solar-control to enable unified routing:
+Solar-host connects to solar-control over **Socket.IO** (namespace `/hosts`). Set `SOLAR_CONTROL_URL` and `SOLAR_CONTROL_API_KEY` in `.env`. On startup the host registers and appears in solar-control’s **pending** list until approved.
+
+**Approve the host** (via solar-control management API or WebUI):
 
 ```bash
-curl -X POST http://your-control-server:8000/hosts \
-  -H "X-API-Key: gateway-key" \
+# List pending hosts
+curl http://your-control-server:8000/api/hosts/pending \
+  -H "X-API-Key: your-management-api-key"
+
+# Approve (use pending_id from the list)
+curl -X POST http://your-control-server:8000/api/hosts/pending/{pending_id}/approve \
+  -H "X-API-Key: your-management-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "GPU Server 1",
@@ -487,7 +504,9 @@ curl -X POST http://your-control-server:8000/hosts \
   }'
 ```
 
-Your instances will be accessible through the unified OpenAI-compatible gateway:
+Alternatively, create a host directly (no pending step) with `POST /api/hosts` and the same JSON body.
+
+Once approved, instances are accessible through solar-control’s OpenAI-compatible gateway:
 - `/v1/chat/completions` - Chat completion (llamacpp, huggingface_causal)
 - `/v1/completions` - Text completion (llamacpp, huggingface_causal)
 - `/v1/classify` - Classification (huggingface_classification)
