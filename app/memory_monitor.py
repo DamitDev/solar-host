@@ -7,7 +7,6 @@ import time
 from typing import Optional, Dict, Union
 import psutil
 
-
 # Cache for memory info to avoid excessive polling
 _memory_cache: Optional[Dict] = None
 _cache_timestamp: float = 0

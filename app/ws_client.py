@@ -126,6 +126,7 @@ class SolarControlClient:
 
         if self.insecure and self.base_url.startswith("https://"):
             import aiohttp
+
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
@@ -189,9 +190,7 @@ class SolarControlClient:
         self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
-        print(
-            f"SolarControlClient: Registered as '{host_name}' (id: {self.host_id})"
-        )
+        print(f"SolarControlClient: Registered as '{host_name}' (id: {self.host_id})")
         if was_pending:
             asyncio.create_task(self._post_approval_sync())
 

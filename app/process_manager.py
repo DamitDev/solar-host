@@ -24,7 +24,12 @@ from app.config import settings, config_manager, parse_instance_config
 from app.backends.base import BackendRunner
 from app.backends.llamacpp import LlamaCppRunner
 from app.backends.huggingface import HuggingFaceRunner
-from app.ws_client import get_clients, broadcast_log, broadcast_instance_state, broadcast_instances_update
+from app.ws_client import (
+    get_clients,
+    broadcast_log,
+    broadcast_instance_state,
+    broadcast_instances_update,
+)
 
 
 def get_runner_for_config(config) -> BackendRunner:

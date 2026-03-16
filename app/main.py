@@ -31,7 +31,9 @@ async def lifespan(app: FastAPI):
     print("Starting Solar Host...")
     print(f"API Key configured: {settings.api_key[:4]}...")
     if settings.insecure:
-        print("WARNING: INSECURE mode enabled - TLS certificate verification is disabled")
+        print(
+            "WARNING: INSECURE mode enabled - TLS certificate verification is disabled"
+        )
 
     # Initialize and start solar-control WebSocket clients
     clients = init_clients(settings)
@@ -40,7 +42,9 @@ async def lifespan(app: FastAPI):
         for client in clients:
             await client.start()
         health_task = asyncio.create_task(health_report_loop())
-        print(f"Solar Control WebSocket client(s) started ({len(clients)} connection(s))")
+        print(
+            f"Solar Control WebSocket client(s) started ({len(clients)} connection(s))"
+        )
     else:
         print("Solar Control WebSocket client not configured (standalone mode)")
 

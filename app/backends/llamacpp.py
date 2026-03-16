@@ -299,7 +299,9 @@ class LlamaCppRunner(BackendRunner):
             # Update pending metrics for last active slot
             last_slot_id = last_state.get("slot_id")
             if isinstance(last_slot_id, int):
-                pending: dict[str, Any] = pending_by_slot.get(last_slot_id) or {"slot_id": last_slot_id}
+                pending: dict[str, Any] = pending_by_slot.get(last_slot_id) or {
+                    "slot_id": last_slot_id
+                }
                 if gen_tokens is not None:
                     pending["generated_tokens"] = gen_tokens
                 if tps is not None:

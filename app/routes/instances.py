@@ -14,7 +14,6 @@ from app.models import (
 from app.config import config_manager, parse_instance_config
 from app.process_manager import process_manager
 
-
 router = APIRouter(prefix="/instances", tags=["instances"])
 
 
