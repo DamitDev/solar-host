@@ -332,11 +332,20 @@ class ProcessManager:
             log_thread.start()
             self.log_threads[instance_id] = log_thread
 
-            # Wait a bit and check if process is still running
             await asyncio.sleep(2)
 
+            # Re-read instance state - another coroutine (e.g. stop) may have
+            # changed the status while we slept.
+            instance = config_manager.get_instance(instance_id)
+            if not instance or instance.status not in (
+                InstanceStatus.STARTING,
+                InstanceStatus.RUNNING,
+            ):
+                return (
+                    instance is not None and instance.status == InstanceStatus.RUNNING
+                )
+
             if process.poll() is None:
-                # Process is running
                 instance.status = InstanceStatus.RUNNING
                 instance.pid = process.pid
                 instance.started_at = datetime.now(timezone.utc)
