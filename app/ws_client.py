@@ -121,8 +121,13 @@ class SolarControlClient:
 
     async def _run(self):
         """Create client, register handlers, connect and keep running."""
+        from app.config import settings as host_settings
+
         ssl_verify = not self.insecure
         http_session = None
+
+        reconnect_delay = host_settings.ws_reconnect_delay
+        reconnect_max_delay = host_settings.ws_reconnect_max_delay
 
         if self.insecure and self.base_url.startswith("https://"):
             import aiohttp
@@ -136,8 +141,8 @@ class SolarControlClient:
         sio = socketio.AsyncClient(
             reconnection=True,
             reconnection_attempts=0,  # Infinite
-            reconnection_delay=1.0,
-            reconnection_delay_max=30.0,
+            reconnection_delay=reconnect_delay,
+            reconnection_delay_max=reconnect_max_delay,
             ssl_verify=ssl_verify,
             http_session=http_session,
         )
@@ -145,6 +150,7 @@ class SolarControlClient:
         sio.register_namespace(_HostNamespace(self))
         self._sio = sio  # Set before connect so _on_connect can emit
 
+        outer_backoff = reconnect_delay
         while self._running:
             try:
                 await sio.connect(
@@ -153,13 +159,15 @@ class SolarControlClient:
                     auth={"api_key": self.api_key, "host_name": self.host_name},
                     socketio_path="socket.io",
                 )
-                # Wait until disconnected
+                outer_backoff = reconnect_delay  # Reset on successful connect
                 await sio.wait()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 if self._running:
                     print(f"SolarControlClient: Connection error: {e}")
+                    await asyncio.sleep(outer_backoff)
+                    outer_backoff = min(outer_backoff * 2, reconnect_max_delay)
 
         if sio.connected:
             await sio.disconnect()
@@ -274,7 +282,7 @@ class SolarControlClient:
             timestamp: Optional timestamp string (uses current local time if not provided)
             level: Log level
         """
-        ts = timestamp or datetime.now().isoformat()
+        ts = timestamp or datetime.now(timezone.utc).isoformat()
         await self._emit(
             "log",
             {

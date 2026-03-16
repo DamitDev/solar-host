@@ -139,7 +139,7 @@ class ProcessManager:
                     seq = self.log_sequences[instance_id]
                     self.log_sequences[instance_id] += 1
 
-                    timestamp = datetime.now().isoformat()
+                    timestamp = datetime.now(timezone.utc).isoformat()
                     log_msg = LogMessage(
                         seq=seq, timestamp=timestamp, line=decoded_line
                     )
@@ -289,9 +289,14 @@ class ProcessManager:
         instance.status = InstanceStatus.STARTING
         instance.error_message = None
 
-        # Set supported endpoints
-        backend_type = getattr(instance.config, "backend_type", "llamacpp")
-        if hasattr(runner, "get_supported_endpoints_for_type"):
+        # Set supported endpoints (use model_type for llamacpp differentiation)
+        if hasattr(runner, "get_supported_endpoints_for_model_type"):
+            model_type = getattr(instance.config, "model_type", "llm")
+            instance.supported_endpoints = (
+                runner.get_supported_endpoints_for_model_type(model_type)
+            )
+        elif hasattr(runner, "get_supported_endpoints_for_type"):
+            backend_type = getattr(instance.config, "backend_type", "llamacpp")
             instance.supported_endpoints = runner.get_supported_endpoints_for_type(
                 backend_type
             )
@@ -408,12 +413,11 @@ class ProcessManager:
                 process = self.processes[instance_id]
                 process.terminate()
 
-                # Wait for process to terminate
                 try:
-                    process.wait(timeout=10)
+                    await asyncio.to_thread(process.wait, 10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait()
+                    await asyncio.to_thread(process.wait)
 
                 del self.processes[instance_id]
 
@@ -428,6 +432,11 @@ class ProcessManager:
                 del self.instance_runners[instance_id]
             if instance_id in self.instance_contexts:
                 del self.instance_contexts[instance_id]
+            self.log_buffers.pop(instance_id, None)
+            self.log_sequences.pop(instance_id, None)
+            self.log_threads.pop(instance_id, None)
+            self.state_buffers.pop(instance_id, None)
+            self.state_sequences.pop(instance_id, None)
 
             instance.status = InstanceStatus.STOPPED
             instance.pid = None
@@ -474,11 +483,15 @@ class ProcessManager:
 
         instance_id = str(uuid.uuid4())
 
-        # Determine supported endpoints based on backend type
         runner = get_runner_for_config(config)
-        backend_type = getattr(config, "backend_type", "llamacpp")
 
-        if hasattr(runner, "get_supported_endpoints_for_type"):
+        if hasattr(runner, "get_supported_endpoints_for_model_type"):
+            model_type = getattr(config, "model_type", "llm")
+            supported_endpoints = runner.get_supported_endpoints_for_model_type(
+                model_type
+            )
+        elif hasattr(runner, "get_supported_endpoints_for_type"):
+            backend_type = getattr(config, "backend_type", "llamacpp")
             supported_endpoints = runner.get_supported_endpoints_for_type(backend_type)
         else:
             supported_endpoints = runner.get_supported_endpoints()
@@ -540,6 +553,15 @@ class ProcessManager:
             return False
 
         config_manager.remove_instance(instance_id)
+
+        # Cleanup any lingering buffers
+        self.log_buffers.pop(instance_id, None)
+        self.log_sequences.pop(instance_id, None)
+        self.log_threads.pop(instance_id, None)
+        self.state_buffers.pop(instance_id, None)
+        self.state_sequences.pop(instance_id, None)
+        self.instance_runners.pop(instance_id, None)
+        self.instance_contexts.pop(instance_id, None)
 
         # Notify solar-control of instance update
         self._push_instances_update()

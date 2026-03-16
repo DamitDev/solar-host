@@ -135,10 +135,6 @@ class LlamaCppRunner(BackendRunner):
         return "/health"
 
     def get_supported_endpoints(self) -> List[str]:
-        """Get supported endpoints (default - all possible endpoints)."""
-        # Return all possible endpoints - the actual endpoints will be
-        # determined by the llama.cpp server based on flags (--embedding, --rerank)
-        # The process manager will call get_supported_endpoints_for_type if available
         return [
             "/v1/chat/completions",
             "/v1/completions",
@@ -146,6 +142,14 @@ class LlamaCppRunner(BackendRunner):
             "/v1/embeddings",
             "/v1/rerank",
         ]
+
+    def get_supported_endpoints_for_model_type(self, model_type: str) -> List[str]:
+        """Return endpoints based on llama.cpp model_type (llm, embedding, reranker)."""
+        if model_type == "embedding":
+            return ["/v1/embeddings", "/v1/models"]
+        elif model_type == "reranker":
+            return ["/v1/rerank", "/v1/models"]
+        return ["/v1/chat/completions", "/v1/completions", "/v1/models"]
 
     def initialize_context(self) -> Dict[str, Any]:
         """Initialize parsing context for llama.cpp log parsing."""
