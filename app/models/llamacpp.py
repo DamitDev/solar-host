@@ -6,7 +6,7 @@ from typing import Optional, Literal, Any
 
 class LlamaCppConfig(BaseModel):
     """Configuration for a llama.cpp server instance.
-    
+
     Note: api_key is NOT a config parameter - instances always use the host's API key.
     """
 
@@ -21,6 +21,7 @@ class LlamaCppConfig(BaseModel):
         if isinstance(data, dict):
             data.pop("api_key", None)
         return data
+
     model: str = Field(..., description="Path to the GGUF model file")
     alias: str = Field(..., description="Model alias (e.g., gpt-oss:120b)")
     threads: int = Field(default=1, description="Number of threads")
@@ -34,17 +35,19 @@ class LlamaCppConfig(BaseModel):
         default=None, description="Path to Jinja chat template"
     )
     chat_template_kwargs: Optional[str] = Field(
-        default=None, description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')"
+        default=None,
+        description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')",
     )
     reasoning_budget: Optional[int] = Field(
-        default=None, description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)"
+        default=None,
+        description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)",
     )
-    cache_type_k: Optional[Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]] = Field(
-        default=None, description="KV cache quantization type for keys (-ctk)"
-    )
-    cache_type_v: Optional[Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]] = Field(
-        default=None, description="KV cache quantization type for values (-ctv)"
-    )
+    cache_type_k: Optional[
+        Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
+    ] = Field(default=None, description="KV cache quantization type for keys (-ctk)")
+    cache_type_v: Optional[
+        Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
+    ] = Field(default=None, description="KV cache quantization type for values (-ctv)")
     rope_scaling: Optional[Literal["none", "linear", "yarn"]] = Field(
         default=None, description="RoPE scaling method (--rope-scaling)"
     )
@@ -62,11 +65,13 @@ class LlamaCppConfig(BaseModel):
         default=False, description="Enable llama-server --special flag"
     )
     ot: Optional[str] = Field(
-        default=None, description="Override tensor string (passed as -ot flag to llama-server)"
+        default=None,
+        description="Override tensor string (passed as -ot flag to llama-server)",
     )
     model_type: Optional[Literal["llm", "embedding", "reranker"]] = Field(
         default="llm", description="Model type: llm (default), embedding, or reranker"
     )
     pooling: Optional[Literal["none", "mean", "cls", "last", "rank"]] = Field(
-        default=None, description="Pooling strategy for embedding models (only valid when model_type is embedding)"
+        default=None,
+        description="Pooling strategy for embedding models (only valid when model_type is embedding)",
     )

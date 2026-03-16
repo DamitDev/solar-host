@@ -13,7 +13,7 @@ def _strip_api_key(data: Any) -> Any:
 
 class HuggingFaceCausalConfig(BaseModel):
     """Configuration for a HuggingFace AutoModelForCausalLM instance.
-    
+
     Note: api_key is NOT a config parameter - instances always use the host's API key.
     """
 
@@ -53,7 +53,7 @@ class HuggingFaceCausalConfig(BaseModel):
 
 class HuggingFaceClassificationConfig(BaseModel):
     """Configuration for a HuggingFace AutoModelForSequenceClassification instance.
-    
+
     Note: api_key is NOT a config parameter - instances always use the host's API key.
     """
 
@@ -92,7 +92,7 @@ class HuggingFaceClassificationConfig(BaseModel):
 
 class HuggingFaceEmbeddingConfig(BaseModel):
     """Configuration for a HuggingFace embedding model instance using AutoModel.
-    
+
     Note: api_key is NOT a config parameter - instances always use the host's API key.
     """
 

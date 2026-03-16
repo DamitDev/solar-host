@@ -11,7 +11,6 @@ This file is kept for potential future local debugging endpoints.
 
 from fastapi import APIRouter
 
-
 router = APIRouter(tags=["websockets"])
 
 
