@@ -242,6 +242,7 @@ class SolarControlClient:
             {
                 "host_name": self.host_name,
                 "instances": instances,
+                "roles": config_manager.roles,
             },
             namespace=self.NAMESPACE,
         )

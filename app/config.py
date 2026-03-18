@@ -97,6 +97,7 @@ class ConfigManager:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = Path(config_file or settings.config_file)
         self.instances: Dict[str, Instance] = {}
+        self.roles: List[str] = ["inference"]
         self.load()
 
     def load(self):
@@ -105,6 +106,7 @@ class ConfigManager:
             try:
                 with open(self.config_file, "r") as f:
                     data = json.load(f)
+                    self.roles = data.get("roles", ["inference"])
                     for instance_data in data.get("instances", []):
                         try:
                             # Migrate config if needed
@@ -137,10 +139,11 @@ class ConfigManager:
         """Save configuration to disk."""
         try:
             data = {
+                "roles": self.roles,
                 "instances": [
                     instance.model_dump(mode="json")
                     for instance in self.instances.values()
-                ]
+                ],
             }
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, "w") as f:
