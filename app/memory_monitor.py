@@ -1,5 +1,6 @@
 """
-Memory monitoring for GPU VRAM (NVIDIA) and system RAM (macOS).
+Memory monitoring for GPU VRAM (NVIDIA) and system RAM (macOS),
+and GPU type detection.
 """
 
 import platform
@@ -11,6 +12,9 @@ import psutil
 _memory_cache: Optional[Dict] = None
 _cache_timestamp: float = 0
 CACHE_DURATION = 5.0  # seconds
+
+# GPU type is constant for the lifetime of the process
+_gpu_type_cache: Optional[str] = None
 
 
 def get_memory_info() -> Optional[Dict[str, Union[float, str]]]:
@@ -45,6 +49,36 @@ def get_memory_info() -> Optional[Dict[str, Union[float, str]]]:
         _cache_timestamp = current_time
 
     return result
+
+
+def detect_gpu_type() -> str:
+    """Detect the acceleration backend available on this host.
+
+    Returns one of: "nvidia_cuda", "apple_mps", "cpu".
+    Result is cached for the lifetime of the process.
+    """
+    global _gpu_type_cache
+    if _gpu_type_cache is not None:
+        return _gpu_type_cache
+
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+        if pynvml.nvmlDeviceGetCount() > 0:
+            pynvml.nvmlShutdown()
+            _gpu_type_cache = "nvidia_cuda"
+            return _gpu_type_cache
+        pynvml.nvmlShutdown()
+    except Exception:
+        pass
+
+    if platform.system() == "Darwin":
+        _gpu_type_cache = "apple_mps"
+        return _gpu_type_cache
+
+    _gpu_type_cache = "cpu"
+    return _gpu_type_cache
 
 
 def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
