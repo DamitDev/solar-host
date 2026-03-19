@@ -237,12 +237,15 @@ class SolarControlClient:
                 }
             )
 
+        from app.memory_monitor import detect_gpu_type
+
         await self._sio.emit(
             "registration",
             {
                 "host_name": self.host_name,
                 "instances": instances,
                 "roles": config_manager.roles,
+                "gpu_type": detect_gpu_type(),
             },
             namespace=self.NAMESPACE,
         )
@@ -306,7 +309,7 @@ class SolarControlClient:
 
     async def send_health(self, memory: Optional[Dict[str, Any]] = None):
         """Send host health/memory update to solar-control."""
-        from app.memory_monitor import get_memory_info
+        from app.memory_monitor import get_memory_info, detect_gpu_type
         from app.config import config_manager
 
         if memory is None:
@@ -321,6 +324,7 @@ class SolarControlClient:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data": {
                     "memory": memory,
+                    "gpu_type": detect_gpu_type(),
                     "instance_count": len(instances),
                     "running_instance_count": running_count,
                 },
