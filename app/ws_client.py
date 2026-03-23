@@ -321,6 +321,7 @@ class SolarControlClient:
         health_data: Dict[str, Any] = {
             "memory": memory,
             "gpu_type": detect_gpu_type(),
+            "roles": config_manager.roles,
             "instance_count": len(instances),
             "running_instance_count": running_count,
         }
