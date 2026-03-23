@@ -75,6 +75,9 @@ class MemoryInfo(BaseModel):
 
     used_gb: float = Field(..., description="Used memory in GB")
     total_gb: float = Field(..., description="Total memory in GB")
+    available_gb: float = Field(
+        ..., description="Memory available for new workloads (total - used)"
+    )
     percent: float = Field(..., description="Usage percentage")
     memory_type: str = Field(..., description="Type of memory (VRAM or RAM)")
 
