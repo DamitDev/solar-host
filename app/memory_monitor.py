@@ -24,6 +24,7 @@ def get_memory_info() -> Optional[Dict[str, Union[float, str]]]:
     Returns dict with:
     - used_gb: Used memory in GB
     - total_gb: Total memory in GB
+    - available_gb: Memory available for new workloads (total - used)
     - percent: Usage percentage
     - memory_type: "VRAM" or "RAM"
 
@@ -108,9 +109,12 @@ def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
         total_gb = total_capacity / (1024**3)
         percent = (total_used / total_capacity * 100) if total_capacity > 0 else 0
 
+        available_gb = total_gb - used_gb
+
         return {
             "used_gb": round(used_gb, 2),
             "total_gb": round(total_gb, 2),
+            "available_gb": round(available_gb, 2),
             "percent": round(percent, 2),
             "memory_type": "VRAM",
         }
@@ -129,9 +133,12 @@ def _get_mac_memory() -> Optional[Dict[str, Union[float, str]]]:
         total_gb = mem.total / (1024**3)
         percent = mem.percent
 
+        available_gb = total_gb - used_gb
+
         return {
             "used_gb": round(used_gb, 2),
             "total_gb": round(total_gb, 2),
+            "available_gb": round(available_gb, 2),
             "percent": round(percent, 2),
             "memory_type": "RAM",
         }
