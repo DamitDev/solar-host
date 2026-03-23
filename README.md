@@ -44,6 +44,7 @@ Create a `.env` file in the `solar-host/` directory:
 API_KEY=your-secret-key-here
 HOST=0.0.0.0
 PORT=8001
+MODELS_DIR=./models
 
 # Solar-control connection (for Socket.IO registration and lifecycle)
 SOLAR_CONTROL_URL=http://localhost:8000
@@ -51,6 +52,7 @@ SOLAR_CONTROL_API_KEY=your-solar-control-management-api-key
 ```
 
 - **API_KEY** - Used by solar-control (and other callers) to access this host’s REST API.
+- **MODELS_DIR** - Path to the models directory. Used for disk space reporting in the `/health` endpoint. Defaults to `./models`.
 - **SOLAR_CONTROL_URL** - Base URL of solar-control (HTTP; Socket.IO connects to the same origin).
 - **SOLAR_CONTROL_API_KEY** - Management API key from solar-control. The host uses it to connect to the `/hosts` namespace; it must be approved via the management API or WebUI before it appears in the gateway pool.
 
@@ -73,7 +75,7 @@ The server will:
 
 ```bash
 curl http://localhost:8001/health
-# Should return: {"status":"healthy","service":"solar-host","version":"2.0.0"}
+# Should return: {"status":"healthy","service":"solar-host","version":"2.0.0","disk":{"total_gb":500,"used_gb":120,"available_gb":380}}
 ```
 
 ### 4. Access Swagger UI
