@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     start_port: int = 3500
     max_retries: int = 2
     log_buffer_size: int = 1000
+    models_dir: str = "./models"
 
     # Solar-control connection settings (WebSocket 2.0)
     # URL(s) to solar-control's host channel endpoint
