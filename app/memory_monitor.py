@@ -1,10 +1,12 @@
 """
 Memory monitoring for GPU VRAM (NVIDIA) and system RAM (macOS),
-and GPU type detection.
+GPU type detection, and disk usage reporting.
 """
 
 import platform
+import shutil
 import time
+from pathlib import Path
 from typing import Optional, Dict, Union
 import psutil
 
@@ -141,6 +143,26 @@ def _get_mac_memory() -> Optional[Dict[str, Union[float, str]]]:
             "available_gb": round(available_gb, 2),
             "percent": round(percent, 2),
             "memory_type": "RAM",
+        }
+    except Exception:
+        return None
+
+
+def get_disk_info(path: str) -> Optional[Dict[str, float]]:
+    """Return disk usage stats (in GB) for the filesystem containing *path*.
+
+    Walks up to the nearest existing parent if *path* itself doesn't exist.
+    Returns None if usage cannot be determined.
+    """
+    try:
+        target = Path(path).resolve()
+        while not target.exists():
+            target = target.parent
+        usage = shutil.disk_usage(target)
+        return {
+            "total_gb": round(usage.total / (1024**3), 2),
+            "used_gb": round(usage.used / (1024**3), 2),
+            "available_gb": round(usage.free / (1024**3), 2),
         }
     except Exception:
         return None

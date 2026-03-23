@@ -309,8 +309,8 @@ class SolarControlClient:
 
     async def send_health(self, memory: Optional[Dict[str, Any]] = None):
         """Send host health/memory update to solar-control."""
-        from app.memory_monitor import get_memory_info, detect_gpu_type
-        from app.config import config_manager
+        from app.memory_monitor import get_memory_info, detect_gpu_type, get_disk_info
+        from app.config import config_manager, settings
 
         if memory is None:
             memory = get_memory_info()
@@ -318,16 +318,24 @@ class SolarControlClient:
         instances = config_manager.get_all_instances()
         running_count = sum(1 for i in instances if i.status.value == "running")
 
+        health_data: Dict[str, Any] = {
+            "memory": memory,
+            "gpu_type": detect_gpu_type(),
+            "instance_count": len(instances),
+            "running_instance_count": running_count,
+        }
+
+        disk = get_disk_info(settings.models_dir)
+        if disk:
+            health_data["disk_total_gb"] = disk["total_gb"]
+            health_data["disk_used_gb"] = disk["used_gb"]
+            health_data["disk_available_gb"] = disk["available_gb"]
+
         await self._emit(
             "host_health",
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data": {
-                    "memory": memory,
-                    "gpu_type": detect_gpu_type(),
-                    "instance_count": len(instances),
-                    "running_instance_count": running_count,
-                },
+                "data": health_data,
             },
         )
 

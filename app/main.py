@@ -2,9 +2,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from pathlib import Path
 import asyncio
-import shutil
 
 from app.config import settings
 from app.process_manager import process_manager
@@ -155,22 +153,11 @@ def custom_openapi():
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
-def get_disk_info(path: str) -> dict:
-    """Return disk usage stats (in GB) for the given path's filesystem."""
-    target = Path(path).resolve()
-    while not target.exists():
-        target = target.parent
-    usage = shutil.disk_usage(target)
-    return {
-        "total_gb": round(usage.total / (1024**3), 2),
-        "used_gb": round(usage.used / (1024**3), 2),
-        "available_gb": round(usage.free / (1024**3), 2),
-    }
-
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    from app.memory_monitor import get_disk_info
+
     return {
         "status": "healthy",
         "service": "solar-host",
