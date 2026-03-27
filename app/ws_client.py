@@ -75,6 +75,7 @@ class SolarControlClient:
         self._pending = False
         self._running = False
         self._connection_task: Optional[Any] = None
+        self._registration_task: Optional[asyncio.Task] = None
 
     @property
     def is_connected(self) -> bool:
@@ -180,14 +181,18 @@ class SolarControlClient:
         """Called when connected to /hosts namespace."""
         self._connected = True
         print(f"SolarControlClient: Connected to {self.base_url}")
-        # Emit registration with instance list
-        asyncio.create_task(self._send_registration())
+        if self._registration_task and not self._registration_task.done():
+            self._registration_task.cancel()
+        self._registration_task = asyncio.create_task(self._send_registration())
 
     def _on_disconnect(self):
         """Called when disconnected."""
         self._connected = False
         self._pending = False
         self.host_id = None
+        if self._registration_task and not self._registration_task.done():
+            self._registration_task.cancel()
+        self._registration_task = None
 
     def _on_registration_ack(self, data: dict):
         """Handle registration_ack from server.
@@ -211,10 +216,16 @@ class SolarControlClient:
         )
 
     def _on_rejected(self, data: dict):
-        """Handle rejected event - admin rejected this host."""
+        """Handle rejected event - admin rejected this host.
+
+        Stops the client entirely so it won't retry.  The server
+        disconnects the sid right after sending this event; without
+        the flag the reconnection loop would immediately reconnect.
+        """
         self._pending = False
+        self._running = False
         reason = data.get("reason", "No reason given")
-        print(f"SolarControlClient: Registration rejected: {reason}")
+        print(f"SolarControlClient: Registration rejected: {reason}. Stopping client.")
 
     async def _send_registration(self):
         """Send registration event with instance list."""
