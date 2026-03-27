@@ -41,6 +41,9 @@ async def lifespan(app: FastAPI):
     if clients:
         for client in clients:
             await client.start()
+        # Start the batched emission flush loop
+        loop = asyncio.get_running_loop()
+        process_manager.ensure_flush_loop(loop)
         health_task = asyncio.create_task(health_report_loop())
         print(
             f"Solar Control WebSocket client(s) started ({len(clients)} connection(s))"
@@ -158,11 +161,12 @@ async def health_check():
     """Health check endpoint"""
     from app.memory_monitor import get_disk_info
 
+    disk = await asyncio.to_thread(get_disk_info, settings.models_dir)
     return {
         "status": "healthy",
         "service": "solar-host",
         "version": "2.0.0",
-        "disk": get_disk_info(settings.models_dir),
+        "disk": disk,
     }
 
 
@@ -188,7 +192,7 @@ async def get_memory():
     from app.memory_monitor import get_memory_info
     from app.models import MemoryInfo
 
-    memory_info = get_memory_info()
+    memory_info = await asyncio.to_thread(get_memory_info)
     if not memory_info:
         raise HTTPException(status_code=503, detail="Memory information not available")
     # Coerce types explicitly to satisfy typing
