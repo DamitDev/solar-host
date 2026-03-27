@@ -216,10 +216,16 @@ class SolarControlClient:
         )
 
     def _on_rejected(self, data: dict):
-        """Handle rejected event - admin rejected this host."""
+        """Handle rejected event - admin rejected this host.
+
+        Stops the client entirely so it won't retry.  The server
+        disconnects the sid right after sending this event; without
+        the flag the reconnection loop would immediately reconnect.
+        """
         self._pending = False
+        self._running = False
         reason = data.get("reason", "No reason given")
-        print(f"SolarControlClient: Registration rejected: {reason}")
+        print(f"SolarControlClient: Registration rejected: {reason}. Stopping client.")
 
     async def _send_registration(self):
         """Send registration event with instance list."""
