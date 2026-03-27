@@ -145,6 +145,7 @@ class SolarControlClient:
             reconnection_delay_max=reconnect_max_delay,
             ssl_verify=ssl_verify,
             http_session=http_session,
+            handle_sigint=False,
         )
 
         sio.register_namespace(_HostNamespace(self))
@@ -239,13 +240,14 @@ class SolarControlClient:
 
         from app.memory_monitor import detect_gpu_type
 
+        gpu_type = await asyncio.to_thread(detect_gpu_type)
         await self._sio.emit(
             "registration",
             {
                 "host_name": self.host_name,
                 "instances": instances,
                 "roles": config_manager.roles,
-                "gpu_type": detect_gpu_type(),
+                "gpu_type": gpu_type,
             },
             namespace=self.NAMESPACE,
         )
@@ -269,43 +271,13 @@ class SolarControlClient:
         except Exception as e:
             print(f"SolarControlClient: Emit error: {e}")
 
-    async def send_log(
-        self,
-        instance_id: str,
-        seq: int,
-        line: str,
-        timestamp: Optional[str] = None,
-        level: str = "info",
-    ):
-        """Send a log message to solar-control.
+    async def send_log_batch(self, entries: List[dict]):
+        """Send a batch of log messages to solar-control in a single emit."""
+        await self._emit("log_batch", {"entries": entries})
 
-        Args:
-            instance_id: The instance ID
-            seq: Log sequence number
-            line: Log line content
-            timestamp: Optional timestamp string (uses current local time if not provided)
-            level: Log level
-        """
-        ts = timestamp or datetime.now(timezone.utc).isoformat()
-        await self._emit(
-            "log",
-            {
-                "instance_id": instance_id,
-                "timestamp": ts,
-                "data": {"seq": seq, "line": line, "level": level},
-            },
-        )
-
-    async def send_instance_state(self, instance_id: str, state: Dict[str, Any]):
-        """Send instance runtime state update to solar-control."""
-        await self._emit(
-            "instance_state",
-            {
-                "instance_id": instance_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data": state,
-            },
-        )
+    async def send_instance_state_batch(self, entries: List[dict]):
+        """Send a batch of instance state updates to solar-control."""
+        await self._emit("instance_state_batch", {"entries": entries})
 
     async def send_health(self, memory: Optional[Dict[str, Any]] = None):
         """Send host health/memory update to solar-control."""
@@ -313,20 +285,22 @@ class SolarControlClient:
         from app.config import config_manager, settings
 
         if memory is None:
-            memory = get_memory_info()
+            memory = await asyncio.to_thread(get_memory_info)
+
+        gpu_type = await asyncio.to_thread(detect_gpu_type)
 
         instances = config_manager.get_all_instances()
         running_count = sum(1 for i in instances if i.status.value == "running")
 
         health_data: Dict[str, Any] = {
             "memory": memory,
-            "gpu_type": detect_gpu_type(),
+            "gpu_type": gpu_type,
             "roles": config_manager.roles,
             "instance_count": len(instances),
             "running_instance_count": running_count,
         }
 
-        disk = get_disk_info(settings.models_dir)
+        disk = await asyncio.to_thread(get_disk_info, settings.models_dir)
         if disk:
             health_data["disk_total_gb"] = disk["total_gb"]
             health_data["disk_used_gb"] = disk["used_gb"]
@@ -447,24 +421,18 @@ def init_clients(settings) -> List[SolarControlClient]:
     return solar_control_clients
 
 
-async def broadcast_log(
-    instance_id: str,
-    seq: int,
-    line: str,
-    timestamp: Optional[str] = None,
-    level: str = "info",
-):
-    """Send a log message to solar-control."""
+async def broadcast_log_batch(entries: List[dict]):
+    """Send a batch of log messages to solar-control."""
     client = get_client()
     if client:
-        await client.send_log(instance_id, seq, line, timestamp, level)
+        await client.send_log_batch(entries)
 
 
-async def broadcast_instance_state(instance_id: str, state: Dict[str, Any]):
-    """Send instance state update to solar-control."""
+async def broadcast_instance_state_batch(entries: List[dict]):
+    """Send a batch of instance state updates to solar-control."""
     client = get_client()
     if client:
-        await client.send_instance_state(instance_id, state)
+        await client.send_instance_state_batch(entries)
 
 
 async def broadcast_health(memory: Optional[Dict[str, Any]] = None):

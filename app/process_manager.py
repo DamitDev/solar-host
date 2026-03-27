@@ -4,6 +4,7 @@ import subprocess
 import socket
 import time
 import uuid
+import queue
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
@@ -26,10 +27,12 @@ from app.backends.llamacpp import LlamaCppRunner
 from app.backends.huggingface import HuggingFaceRunner
 from app.ws_client import (
     get_clients,
-    broadcast_log,
-    broadcast_instance_state,
+    broadcast_log_batch,
+    broadcast_instance_state_batch,
     broadcast_instances_update,
 )
+
+FLUSH_INTERVAL_S = 0.1
 
 
 def get_runner_for_config(config) -> BackendRunner:
@@ -72,6 +75,11 @@ class ProcessManager:
 
         # Per-instance runner reference
         self.instance_runners: Dict[str, BackendRunner] = {}
+
+        # Batched emission queues (thread-safe, drained by _flush_loop)
+        self._log_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._state_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._flush_task: Optional[asyncio.Task] = None
 
     def _is_port_available(self, port: int) -> bool:
         """Check if a port is available (not bound by any process)."""
@@ -162,22 +170,61 @@ class ProcessManager:
         except Exception as e:
             print(f"Error reading logs for {instance_id}: {e}")
 
+    def ensure_flush_loop(self, loop: asyncio.AbstractEventLoop):
+        """Start the batched emission flush loop on the given event loop.
+
+        Called once from main.py after the event loop is running.
+        """
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.run_coroutine_threadsafe(
+                self._flush_loop(), loop
+            )
+
+    async def _flush_loop(self):
+        """Periodically drain queued log/state events and emit as batches."""
+        while True:
+            try:
+                await asyncio.sleep(FLUSH_INTERVAL_S)
+                await self._flush_pending()
+            except asyncio.CancelledError:
+                await self._flush_pending()
+                break
+            except Exception:
+                pass
+
+    async def _flush_pending(self):
+        """Drain both queues and emit batched events."""
+        log_entries: List[dict] = []
+        while True:
+            try:
+                log_entries.append(self._log_queue.get_nowait())
+            except queue.Empty:
+                break
+
+        latest_states: Dict[str, dict] = {}
+        while True:
+            try:
+                entry = self._state_queue.get_nowait()
+                latest_states[entry["instance_id"]] = entry
+            except queue.Empty:
+                break
+
+        if log_entries:
+            await broadcast_log_batch(log_entries)
+
+        if latest_states:
+            await broadcast_instance_state_batch(list(latest_states.values()))
+
     def _push_log_event(self, instance_id: str, seq: int, line: str, timestamp: str):
-        """Push a log event to all connected solar-controls (thread-safe)."""
-        try:
-            clients = get_clients()
-            for client in clients:
-                if client.is_connected:
-                    # Get the main event loop (stored when the app starts)
-                    loop = getattr(client, "_main_loop", None)
-                    if loop and loop.is_running():
-                        asyncio.run_coroutine_threadsafe(
-                            broadcast_log(instance_id, seq, line, timestamp), loop
-                        )
-                        break  # Only need to schedule once, broadcast handles all
-        except Exception:
-            # Never let WS errors break logging
-            pass
+        """Queue a log event for batched emission (thread-safe, non-blocking)."""
+        self._log_queue.put(
+            {
+                "instance_id": instance_id,
+                "seq": seq,
+                "line": line,
+                "timestamp": timestamp,
+            }
+        )
 
     def _emit_state_event(self, instance_id: str, update):
         """Emit a state event from a RuntimeStateUpdate."""
@@ -225,36 +272,27 @@ class ProcessManager:
         self._push_state_event(instance_id, state)
 
     def _push_state_event(self, instance_id: str, state: InstanceRuntimeState):
-        """Push an instance state event to all connected solar-controls (thread-safe)."""
-        try:
-            clients = get_clients()
-            for client in clients:
-                if client.is_connected:
-                    state_dict = {
-                        "busy": state.busy,
-                        "phase": state.phase.value if state.phase else None,
-                        "prefill_progress": state.prefill_progress,
-                        "active_slots": state.active_slots,
-                        "slot_id": state.slot_id,
-                        "task_id": state.task_id,
-                        "prefill_prompt_tokens": state.prefill_prompt_tokens,
-                        "generated_tokens": state.generated_tokens,
-                        "decode_tps": state.decode_tps,
-                        "decode_ms_per_token": state.decode_ms_per_token,
-                        "checkpoint_index": state.checkpoint_index,
-                        "checkpoint_total": state.checkpoint_total,
-                    }
-
-                    # Get the main event loop (stored when the app starts)
-                    loop = getattr(client, "_main_loop", None)
-                    if loop and loop.is_running():
-                        asyncio.run_coroutine_threadsafe(
-                            broadcast_instance_state(instance_id, state_dict), loop
-                        )
-                        break  # Only need to schedule once, broadcast handles all
-        except Exception:
-            # Never let WS errors break state emission
-            pass
+        """Queue a state event for batched emission (thread-safe, non-blocking)."""
+        self._state_queue.put(
+            {
+                "instance_id": instance_id,
+                "timestamp": state.timestamp,
+                "data": {
+                    "busy": state.busy,
+                    "phase": state.phase.value if state.phase else None,
+                    "prefill_progress": state.prefill_progress,
+                    "active_slots": state.active_slots,
+                    "slot_id": state.slot_id,
+                    "task_id": state.task_id,
+                    "prefill_prompt_tokens": state.prefill_prompt_tokens,
+                    "generated_tokens": state.generated_tokens,
+                    "decode_tps": state.decode_tps,
+                    "decode_ms_per_token": state.decode_ms_per_token,
+                    "checkpoint_index": state.checkpoint_index,
+                    "checkpoint_total": state.checkpoint_total,
+                },
+            }
+        )
 
     def get_last_generation(self, instance_id: str) -> Optional[GenerationMetrics]:
         """Get the last generation metrics for an instance."""
