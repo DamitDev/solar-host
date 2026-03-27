@@ -616,15 +616,22 @@ class ProcessManager:
         return True
 
     async def auto_restart_running_instances(self):
-        """Auto-restart instances that were running before shutdown."""
-        for instance in config_manager.get_running_instances():
-            print(f"Auto-restarting instance: {instance.id} ({instance.config.alias})")
-            # Reset status first
-            instance.status = InstanceStatus.STOPPED
-            instance.pid = None
-            config_manager.update_instance(instance.id, instance)
-            # Start the instance
-            await self.start_instance(instance.id)
+        """Auto-restart instances that were running before shutdown.
+        Also resolves intermediate states (starting/stopping) left over
+        from an interrupted shutdown.
+        """
+        for instance in config_manager.get_all_instances():
+            if instance.status in (InstanceStatus.RUNNING, InstanceStatus.STARTING):
+                print(f"Auto-restarting instance: {instance.id} ({instance.config.alias})")
+                instance.status = InstanceStatus.STOPPED
+                instance.pid = None
+                config_manager.update_instance(instance.id, instance)
+                await self.start_instance(instance.id)
+            elif instance.status == InstanceStatus.STOPPING:
+                print(f"Resolving interrupted stop for instance: {instance.id} ({instance.config.alias})")
+                instance.status = InstanceStatus.STOPPED
+                instance.pid = None
+                config_manager.update_instance(instance.id, instance)
 
 
 # Global process manager instance
