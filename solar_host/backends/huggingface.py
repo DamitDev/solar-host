@@ -4,9 +4,9 @@ import re
 import sys
 from typing import List, Optional, Any, Dict
 
-from app.backends.base import BackendRunner, RuntimeStateUpdate
-from app.models.base import InstancePhase, GenerationMetrics, BackendType
-from app.config import settings
+from solar_host.backends.base import BackendRunner, RuntimeStateUpdate
+from solar_host.models.base import InstancePhase, GenerationMetrics, BackendType
+from solar_host.config import settings
 
 
 class HuggingFaceRunner(BackendRunner):
@@ -29,8 +29,21 @@ class HuggingFaceRunner(BackendRunner):
         # This will be overridden based on the actual config type
         return "huggingface"
 
+    @staticmethod
+    def check_dependencies() -> None:
+        """Verify that HuggingFace backend dependencies are installed."""
+        try:
+            import torch  # noqa: F401
+            import transformers  # noqa: F401
+        except ImportError:
+            raise RuntimeError(
+                "HuggingFace backend requires the 'huggingface' extra. "
+                "Install with: pip install solar-host[huggingface]"
+            )
+
     def build_command(self, instance: Any) -> List[str]:
         """Build command to start HuggingFace server process."""
+        self.check_dependencies()
         config = instance.config
         backend_type = config.backend_type
 
@@ -56,7 +69,7 @@ class HuggingFaceRunner(BackendRunner):
         cmd = [
             sys.executable,
             "-m",
-            "app.servers.hf_server",
+            "solar_host.servers.hf_server",
             "--model-id",
             config.model_id,
             "--model-type",

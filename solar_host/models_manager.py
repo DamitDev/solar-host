@@ -14,7 +14,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.config import settings
+from solar_host.config import settings
 
 logger = logging.getLogger(__name__)
 

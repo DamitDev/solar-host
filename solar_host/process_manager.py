@@ -12,7 +12,7 @@ from collections import deque
 import asyncio
 import threading
 
-from app.models import (
+from solar_host.models import (
     Instance,
     InstanceStatus,
     LogMessage,
@@ -21,11 +21,11 @@ from app.models import (
     GenerationMetrics,
     BackendType,
 )
-from app.config import settings, config_manager, parse_instance_config
-from app.backends.base import BackendRunner
-from app.backends.llamacpp import LlamaCppRunner
-from app.backends.huggingface import HuggingFaceRunner
-from app.ws_client import (
+from solar_host.config import settings, config_manager, parse_instance_config
+from solar_host.backends.base import BackendRunner
+from solar_host.backends.llamacpp import LlamaCppRunner
+from solar_host.backends.huggingface import HuggingFaceRunner
+from solar_host.ws_client import (
     get_clients,
     broadcast_log_batch,
     broadcast_instance_state_batch,

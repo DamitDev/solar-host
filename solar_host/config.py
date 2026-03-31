@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from pydantic_settings import BaseSettings
 
-from app.models.base import Instance, InstanceStatus
-from app.models.llamacpp import LlamaCppConfig
-from app.models.huggingface import (
+from solar_host.models.base import Instance, InstanceStatus
+from solar_host.models.llamacpp import LlamaCppConfig
+from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,

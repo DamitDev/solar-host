@@ -4,7 +4,7 @@ from typing import Union, Annotated
 from pydantic import Field
 
 # Import base models first (no dependencies on config types)
-from app.models.base import (
+from solar_host.models.base import (
     BackendType,
     InstanceStatus,
     InstancePhase,
@@ -20,8 +20,8 @@ from app.models.base import (
 )
 
 # Import config models
-from app.models.llamacpp import LlamaCppConfig
-from app.models.huggingface import (
+from solar_host.models.llamacpp import LlamaCppConfig
+from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,

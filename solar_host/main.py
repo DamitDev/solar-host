@@ -4,11 +4,12 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
 
-from app.config import settings
-from app.models_manager import ensure_models_dir, get_models_dir
-from app.process_manager import process_manager
-from app.routes import instances, websockets
-from app.ws_client import init_clients, get_clients, broadcast_health
+from solar_host import __version__
+from solar_host.config import settings
+from solar_host.models_manager import ensure_models_dir, get_models_dir
+from solar_host.process_manager import process_manager
+from solar_host.routes import instances, websockets
+from solar_host.ws_client import init_clients, get_clients, broadcast_health
 
 
 async def health_report_loop():
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Solar Host",
     description="Process manager for model inference backends (llama.cpp, HuggingFace)",
-    version="2.0.0",
+    version=__version__,
     lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": True},
 )
@@ -164,13 +165,13 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    from app.memory_monitor import get_disk_info
+    from solar_host.memory_monitor import get_disk_info
 
     disk = await asyncio.to_thread(get_disk_info, settings.models_dir)
     return {
         "status": "healthy",
         "service": "solar-host",
-        "version": "2.0.0",
+        "version": __version__,
         "disk": disk,
     }
 
@@ -180,7 +181,7 @@ async def root():
     """Root endpoint"""
     return {
         "service": "solar-host",
-        "version": "2.0.0",
+        "version": __version__,
         "description": "Process manager for model inference backends (llama.cpp, HuggingFace)",
         "supported_backends": [
             "llamacpp",
@@ -194,8 +195,8 @@ async def root():
 async def get_memory():
     """Get GPU/RAM memory usage"""
     from fastapi import HTTPException
-    from app.memory_monitor import get_memory_info
-    from app.models import MemoryInfo
+    from solar_host.memory_monitor import get_memory_info
+    from solar_host.models import MemoryInfo
 
     memory_info = await asyncio.to_thread(get_memory_info)
     if not memory_info:
@@ -223,7 +224,16 @@ async def get_memory():
     )
 
 
+def run():
+    """Entry point for the ``solar-host`` console script."""
+    import uvicorn
+
+    uvicorn.run("solar_host.main:app", host=settings.host, port=settings.port)
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=True)
+    uvicorn.run(
+        "solar_host.main:app", host=settings.host, port=settings.port, reload=True
+    )

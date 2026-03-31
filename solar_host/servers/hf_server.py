@@ -11,7 +11,7 @@ Supports:
 - AutoModel: embeddings (/v1/embeddings)
 
 Usage:
-    python -m app.servers.hf_server \
+    python -m solar_host.servers.hf_server \
         --model-id "meta-llama/Llama-2-7b-hf" \
         --model-type causal \
         --alias "llama2:7b" \

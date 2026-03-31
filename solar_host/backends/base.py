@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Any, Dict
 from dataclasses import dataclass
 
-from app.models.base import InstancePhase
+from solar_host.models.base import InstancePhase
 
 
 @dataclass
