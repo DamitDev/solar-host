@@ -38,10 +38,6 @@ class LlamaCppConfig(BaseModel):
         default=None,
         description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')",
     )
-    reasoning: Optional[Literal["on", "off", "auto"]] = Field(
-        default=None,
-        description="Reasoning/thinking mode: 'on' to enable, 'off' to disable, 'auto' to detect from template (passed as --reasoning to llama-server)",
-    )
     reasoning_budget: Optional[int] = Field(
         default=None,
         description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)",
