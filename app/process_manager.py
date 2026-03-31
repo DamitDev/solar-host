@@ -622,13 +622,17 @@ class ProcessManager:
         """
         for instance in config_manager.get_all_instances():
             if instance.status in (InstanceStatus.RUNNING, InstanceStatus.STARTING):
-                print(f"Auto-restarting instance: {instance.id} ({instance.config.alias})")
+                print(
+                    f"Auto-restarting instance: {instance.id} ({instance.config.alias})"
+                )
                 instance.status = InstanceStatus.STOPPED
                 instance.pid = None
                 config_manager.update_instance(instance.id, instance)
                 await self.start_instance(instance.id)
             elif instance.status == InstanceStatus.STOPPING:
-                print(f"Resolving interrupted stop for instance: {instance.id} ({instance.config.alias})")
+                print(
+                    f"Resolving interrupted stop for instance: {instance.id} ({instance.config.alias})"
+                )
                 instance.status = InstanceStatus.STOPPED
                 instance.pid = None
                 config_manager.update_instance(instance.id, instance)
