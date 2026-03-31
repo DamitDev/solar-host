@@ -85,6 +85,10 @@ class LlamaCppRunner(BackendRunner):
         if chat_template_kwargs and chat_template_kwargs.strip():
             cmd.extend(["--chat-template-kwargs", chat_template_kwargs.strip()])
 
+        reasoning = getattr(config, "reasoning", None)
+        if reasoning and reasoning.strip():
+            cmd.extend(["--reasoning", reasoning.strip()])
+
         reasoning_budget = getattr(config, "reasoning_budget", None)
         if reasoning_budget is not None:
             cmd.extend(["--reasoning-budget", str(int(reasoning_budget))])
