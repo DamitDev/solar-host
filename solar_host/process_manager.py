@@ -5,6 +5,8 @@ import socket
 import time
 import uuid
 import queue
+import shutil
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
@@ -33,6 +35,7 @@ from solar_host.ws_client import (
 )
 
 FLUSH_INTERVAL_S = 0.1
+_HAS_STDBUF = shutil.which("stdbuf") is not None
 
 
 def get_runner_for_config(config) -> BackendRunner:
@@ -351,12 +354,20 @@ class ProcessManager:
             alias_safe = instance.config.alias.replace(":", "-").replace("/", "-")
             log_file = self.log_dir / f"{alias_safe}_{int(time.time())}.log"
 
+            # Force line-buffered stdout so lines arrive in generation
+            # order (stdout is block-buffered when piped, causing lines
+            # to arrive after subsequent stderr output).
+            run_env = os.environ.copy()
+            run_env["PYTHONUNBUFFERED"] = "1"
+            run_cmd = ["stdbuf", "-oL"] + cmd if _HAS_STDBUF else cmd
+
             # Start process
             process = subprocess.Popen(
-                cmd,
+                run_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                bufsize=0,  # Unbuffered for real-time output
+                bufsize=0,
+                env=run_env,
             )
 
             self.processes[instance_id] = process
