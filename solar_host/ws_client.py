@@ -269,6 +269,7 @@ class SolarControlClient:
                 }
             )
 
+        from solar_host import __version__
         from solar_host.memory_monitor import detect_gpu_type
 
         gpu_type = await asyncio.to_thread(detect_gpu_type)
@@ -279,6 +280,7 @@ class SolarControlClient:
                 "instances": instances,
                 "roles": config_manager.roles,
                 "gpu_type": gpu_type,
+                "version": __version__,
             },
             namespace=self.NAMESPACE,
         )
