@@ -180,6 +180,7 @@ class SolarControlClient:
                     namespaces=[self.NAMESPACE],
                     auth={"api_key": self.api_key, "host_name": self.host_name},
                     socketio_path="socket.io",
+                    transports=["websocket"],
                 )
                 outer_backoff = reconnect_delay
                 await sio.wait()
@@ -269,6 +270,7 @@ class SolarControlClient:
                 }
             )
 
+        from solar_host import __version__
         from solar_host.memory_monitor import detect_gpu_type
 
         gpu_type = await asyncio.to_thread(detect_gpu_type)
@@ -279,6 +281,7 @@ class SolarControlClient:
                 "instances": instances,
                 "roles": config_manager.roles,
                 "gpu_type": gpu_type,
+                "version": __version__,
             },
             namespace=self.NAMESPACE,
         )
@@ -327,12 +330,15 @@ class SolarControlClient:
         instances = config_manager.get_all_instances()
         running_count = sum(1 for i in instances if i.status.value == "running")
 
+        from solar_host import __version__
+
         health_data: Dict[str, Any] = {
             "memory": memory,
             "gpu_type": gpu_type,
             "roles": config_manager.roles,
             "instance_count": len(instances),
             "running_instance_count": running_count,
+            "version": __version__,
         }
 
         disk = await asyncio.to_thread(get_disk_info, settings.models_dir)
