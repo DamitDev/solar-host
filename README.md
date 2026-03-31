@@ -20,8 +20,20 @@ A multi-backend process manager for model inference servers with REST API and We
 ## Installation
 
 ```bash
-# Install core dependencies
-pip install -r requirements.txt
+# Basic install (llama.cpp backend only)
+pip install solar-host
+
+# With HuggingFace backend support
+pip install solar-host[huggingface]
+
+# With NVIDIA GPU monitoring
+pip install solar-host[nvidia]
+
+# Everything
+pip install solar-host[all]
+
+# Development (editable install with test dependencies)
+pip install -e ".[all,dev]"
 ```
 
 ### Backend-Specific Requirements
@@ -30,9 +42,7 @@ pip install -r requirements.txt
 - Install `llama-server` and ensure it's in your PATH
 
 **For HuggingFace backends:**
-```bash
-pip install torch transformers accelerate
-```
+- Install with the `huggingface` extra: `pip install solar-host[huggingface]`
 
 ## Setup
 
@@ -59,11 +69,11 @@ SOLAR_CONTROL_API_KEY=your-solar-control-management-api-key
 ### 2. Start the server
 
 ```bash
-# Start the server (from solar-host directory)
-uvicorn app.main:app --host 0.0.0.0 --port 8001
+# Start the server (reads HOST and PORT from .env)
+solar-host
 
-# Or with auto-reload for development
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+# Or with uvicorn directly (e.g. for --reload during development)
+uvicorn solar_host.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 The server will:
@@ -402,7 +412,8 @@ solar-host/
 ├── .env                    # Configuration (not in git)
 ├── config.json             # Auto-generated instance storage (not in git)
 ├── logs/                   # Auto-generated log directory (not in git)
-├── app/
+├── pyproject.toml          # Package metadata and dependencies
+├── solar_host/
 │   ├── backends/           # Backend runners
 │   │   ├── base.py         # Abstract BackendRunner
 │   │   ├── llamacpp.py     # llama.cpp runner
@@ -416,8 +427,9 @@ solar-host/
 │   ├── routes/             # API routes
 │   ├── config.py           # Configuration management
 │   ├── main.py             # FastAPI application
+│   ├── models_manager.py   # Managed models directory and manifest
 │   └── process_manager.py  # Process lifecycle management
-├── requirements.txt
+├── tests/
 └── README.md
 ```
 
@@ -429,9 +441,9 @@ solar-host/
 - Another service is using port 8001
 - Solution: Change `PORT` in `.env` or stop the other service
 
-**Error: "No module named 'app'"**
-- You're not in the correct directory
-- Solution: `cd solar-host` and run from there
+**Error: "No module named 'solar_host'"**
+- The package is not installed
+- Solution: `pip install solar-host` or `pip install -e .` for development
 
 ### llama.cpp Instance fails to start
 

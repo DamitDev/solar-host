@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models_manager import (
+from solar_host.models_manager import (
     MANIFEST_FILENAME,
     MANIFEST_TMP_FILENAME,
     Manifest,
@@ -29,7 +29,7 @@ from app.models_manager import (
 def _isolated_models_dir(tmp_path: Path, monkeypatch):
     """Point settings.models_dir at a temporary directory for every test."""
     models = tmp_path / "models"
-    monkeypatch.setattr("app.models_manager.settings.models_dir", str(models))
+    monkeypatch.setattr("solar_host.models_manager.settings.models_dir", str(models))
     return models
 
 

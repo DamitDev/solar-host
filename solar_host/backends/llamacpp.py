@@ -4,9 +4,9 @@ import re
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone
 
-from app.backends.base import BackendRunner, RuntimeStateUpdate
-from app.models.base import InstancePhase, GenerationMetrics
-from app.config import settings
+from solar_host.backends.base import BackendRunner, RuntimeStateUpdate
+from solar_host.models.base import InstancePhase, GenerationMetrics
+from solar_host.config import settings
 
 
 class LlamaCppRunner(BackendRunner):

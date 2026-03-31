@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solar-host"
+version = "0.0.0.dev"
+description = "Process manager for model inference backends (llama.cpp, HuggingFace)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "DamitDev" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "python-multipart>=0.0.12",
+    "python-socketio[asyncio_client]",
+    "Pebble>=5.0.7",
+    "psutil>=6.1.0",
+]
+
+[project.optional-dependencies]
+nvidia = ["nvidia-ml-py>=13.580.82"]
+huggingface = [
+    "torch>=2.0.0",
+    "transformers>=4.35.0",
+    "accelerate>=0.24.0",
+]
+all = ["solar-host[nvidia,huggingface]"]
+dev = ["pytest>=9.0"]
+
+[project.scripts]
+solar-host = "solar_host.main:run"
+
+[project.urls]
+Homepage = "https://github.com/DamitDev/solar-host"
+Repository = "https://github.com/DamitDev/solar-host"
+Issues = "https://github.com/DamitDev/solar-host/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["solar_host"]

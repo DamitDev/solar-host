@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 
-from app.models import (
+from solar_host.models import (
     Instance,
     InstanceCreate,
     InstanceUpdate,
@@ -11,8 +11,8 @@ from app.models import (
     GenerationMetrics,
     LogMessage,
 )
-from app.config import config_manager, parse_instance_config
-from app.process_manager import process_manager
+from solar_host.config import config_manager, parse_instance_config
+from solar_host.process_manager import process_manager
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 

@@ -122,7 +122,7 @@ class SolarControlClient:
 
     async def _run(self):
         """Create client, register handlers, connect and keep running."""
-        from app.config import settings as host_settings
+        from solar_host.config import settings as host_settings
 
         ssl_verify = not self.insecure
         http_session = None
@@ -232,7 +232,7 @@ class SolarControlClient:
         if not self._sio or not self._sio.connected:
             return
 
-        from app.config import config_manager
+        from solar_host.config import config_manager
 
         instances = []
         for instance in config_manager.get_all_instances():
@@ -249,7 +249,7 @@ class SolarControlClient:
                 }
             )
 
-        from app.memory_monitor import detect_gpu_type
+        from solar_host.memory_monitor import detect_gpu_type
 
         gpu_type = await asyncio.to_thread(detect_gpu_type)
         await self._sio.emit(
@@ -292,8 +292,12 @@ class SolarControlClient:
 
     async def send_health(self, memory: Optional[Dict[str, Any]] = None):
         """Send host health/memory update to solar-control."""
-        from app.memory_monitor import get_memory_info, detect_gpu_type, get_disk_info
-        from app.config import config_manager, settings
+        from solar_host.memory_monitor import (
+            get_memory_info,
+            detect_gpu_type,
+            get_disk_info,
+        )
+        from solar_host.config import config_manager, settings
 
         if memory is None:
             memory = await asyncio.to_thread(get_memory_info)
@@ -330,7 +334,7 @@ class SolarControlClient:
 
         Called when instances change (create, delete, start, stop).
         """
-        from app.config import config_manager
+        from solar_host.config import config_manager
 
         instances = []
         for instance in config_manager.get_all_instances():
