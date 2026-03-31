@@ -4,7 +4,7 @@ This module provides a persistent Socket.IO connection to solar-control,
 handling:
 - Registration on connect (auth via api_key)
 - Event streaming (logs, instance state, health)
-- Reconnection (handled by Socket.IO)
+- Reconnection with exponential backoff (application-managed)
 """
 
 import asyncio
@@ -120,6 +120,27 @@ class SolarControlClient:
         self._connected = False
         print("SolarControlClient: Stopped")
 
+    async def reconnect(self) -> bool:
+        """Force reconnection. Resets backoff and restarts the connection loop.
+
+        Called externally (e.g. via the /reconnect REST endpoint) when
+        solar-control detects that this host is no longer connected.
+        """
+        if self.is_connected:
+            return False
+        if not self._running:
+            return False
+
+        if self._connection_task:
+            self._connection_task.cancel()
+            try:
+                await self._connection_task
+            except asyncio.CancelledError:
+                pass
+        print("SolarControlClient: Reconnect requested, restarting connection loop")
+        self._connection_task = asyncio.create_task(self._run())
+        return True
+
     async def _run(self):
         """Create client, register handlers, connect and keep running."""
         from solar_host.config import settings as host_settings
@@ -140,10 +161,7 @@ class SolarControlClient:
             http_session = aiohttp.ClientSession(connector=connector)
 
         sio = socketio.AsyncClient(
-            reconnection=True,
-            reconnection_attempts=0,  # Infinite
-            reconnection_delay=reconnect_delay,
-            reconnection_delay_max=reconnect_max_delay,
+            reconnection=False,
             ssl_verify=ssl_verify,
             http_session=http_session,
             handle_sigint=False,
@@ -155,13 +173,15 @@ class SolarControlClient:
         outer_backoff = reconnect_delay
         while self._running:
             try:
+                if sio.connected:
+                    await sio.disconnect()
                 await sio.connect(
                     self.base_url,
                     namespaces=[self.NAMESPACE],
                     auth={"api_key": self.api_key, "host_name": self.host_name},
                     socketio_path="socket.io",
                 )
-                outer_backoff = reconnect_delay  # Reset on successful connect
+                outer_backoff = reconnect_delay
                 await sio.wait()
             except asyncio.CancelledError:
                 break

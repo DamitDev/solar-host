@@ -9,7 +9,7 @@ from solar_host.config import settings
 from solar_host.models_manager import ensure_models_dir, get_models_dir
 from solar_host.process_manager import process_manager
 from solar_host.routes import instances, websockets
-from solar_host.ws_client import init_clients, get_clients, broadcast_health
+from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 
 
 async def health_report_loop():
@@ -222,6 +222,23 @@ async def get_memory():
         percent=percent,
         memory_type=memory_type,
     )
+
+
+@app.post("/reconnect")
+async def reconnect_to_control():
+    """Trigger reconnection to solar-control.
+
+    Called by solar-control when it detects that this host's Socket.IO
+    session has disconnected, prompting an immediate reconnection attempt
+    instead of waiting for the next backoff cycle.
+    """
+    client = get_client()
+    if not client:
+        return {"status": "no_client"}
+    if client.is_connected:
+        return {"status": "already_connected"}
+    triggered = await client.reconnect()
+    return {"status": "reconnecting" if triggered else "failed"}
 
 
 def run():
