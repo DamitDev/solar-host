@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import asyncio
 
 from app.config import settings
+from app.models_manager import ensure_models_dir, get_models_dir
 from app.process_manager import process_manager
 from app.routes import instances, websockets
 from app.ws_client import init_clients, get_clients, broadcast_health
@@ -34,6 +35,10 @@ async def lifespan(app: FastAPI):
         print(
             "WARNING: INSECURE mode enabled - TLS certificate verification is disabled"
         )
+
+    # Ensure the managed models directory exists
+    ensure_models_dir()
+    print(f"Models directory: {get_models_dir()}")
 
     # Initialize and start solar-control WebSocket clients
     clients = init_clients(settings)
