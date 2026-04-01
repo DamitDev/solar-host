@@ -8,7 +8,7 @@ from solar_host import __version__
 from solar_host.config import settings
 from solar_host.models_manager import ensure_models_dir, get_models_dir
 from solar_host.process_manager import process_manager
-from solar_host.routes import instances, websockets
+from solar_host.routes import instances, models, websockets
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 
 
@@ -125,6 +125,7 @@ async def verify_api_key(request: Request, call_next):
 
 # Include routers
 app.include_router(instances.router)
+app.include_router(models.router)
 app.include_router(websockets.router)
 
 
