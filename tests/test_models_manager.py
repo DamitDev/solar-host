@@ -103,6 +103,21 @@ class TestModelsDir:
         ensure_models_dir()
         assert target.is_dir()
 
+    def test_ensure_creates_manifest(self, tmp_path: Path):
+        ensure_models_dir()
+        manifest_path = get_models_dir() / MANIFEST_FILENAME
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data == {"models": []}
+
+    def test_ensure_does_not_overwrite_existing_manifest(self, tmp_path: Path):
+        ensure_models_dir()
+        entry = _make_entry()
+        add_manifest_entry(entry)
+        ensure_models_dir()
+        manifest = read_manifest()
+        assert len(manifest.models) == 1
+
     def test_ensure_idempotent(self, tmp_path: Path):
         ensure_models_dir()
         ensure_models_dir()
@@ -115,7 +130,12 @@ class TestModelsDir:
 
 
 class TestManifestIO:
-    def test_read_returns_empty_when_missing(self):
+    def test_read_returns_empty_when_file_missing(self, tmp_path: Path):
+        (tmp_path / "models").mkdir()
+        manifest = read_manifest()
+        assert manifest.models == []
+
+    def test_read_returns_empty_after_ensure(self):
         ensure_models_dir()
         manifest = read_manifest()
         assert manifest.models == []
