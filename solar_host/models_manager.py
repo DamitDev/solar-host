@@ -48,8 +48,12 @@ def get_models_dir() -> Path:
 
 
 def ensure_models_dir() -> None:
-    """Create the models directory if it does not exist."""
+    """Create the models directory and initialize an empty manifest if needed."""
     get_models_dir().mkdir(parents=True, exist_ok=True)
+    manifest_path = _manifest_path()
+    if not manifest_path.exists():
+        write_manifest(Manifest())
+        logger.info("Initialized manifest at %s", manifest_path)
 
 
 def source_uri_to_slug(uri: str) -> str:
