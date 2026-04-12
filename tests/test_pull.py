@@ -556,9 +556,9 @@ class TestFailureCleanup:
             resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
 
         assert resp.status_code == 200
-        assert removed_before_dl.get("stale_gone") is True, (
-            "Stale directory should have been removed before download started"
-        )
+        assert (
+            removed_before_dl.get("stale_gone") is True
+        ), "Stale directory should have been removed before download started"
 
 
 # ---------------------------------------------------------------------------

@@ -145,12 +145,64 @@ def remove_manifest_entry(source_uri: str) -> bool:
     return True
 
 
+def get_manifest_entry_by_slug(slug: str) -> Optional[ManifestEntry]:
+    """Look up a manifest entry by slug. Returns None if not found."""
+    manifest = read_manifest()
+    for entry in manifest.models:
+        if entry.slug == slug:
+            return entry
+    return None
+
+
+def delete_model_files(path: str) -> None:
+    """Remove model files from disk.
+
+    Handles both directory and single-file models. Silently succeeds if the
+    path no longer exists (e.g. already manually removed).
+    """
+    model_path = Path(path)
+    try:
+        if model_path.is_dir():
+            shutil.rmtree(model_path, ignore_errors=False)
+        elif model_path.exists():
+            model_path.unlink()
+        # If it does not exist at all, nothing to do.
+    except FileNotFoundError:
+        logger.warning("Model path already gone during deletion: %s", path)
+    except OSError as exc:
+        logger.error("Failed to delete model files at %s: %s", path, exc)
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Pull orchestration
 # ---------------------------------------------------------------------------
 
 # Protects manifest read-modify-write from concurrent pulls in different threads.
 _manifest_lock = threading.Lock()
+
+
+def remove_manifest_entry_by_slug(slug: str) -> Optional[ManifestEntry]:
+    """Remove a manifest entry by slug under the manifest lock.
+
+    Returns the removed entry (so the caller can obtain the path to delete
+    from disk), or None if no entry matched.
+    """
+    with _manifest_lock:
+        manifest = read_manifest()
+        removed: Optional[ManifestEntry] = None
+        new_models = []
+        for entry in manifest.models:
+            if entry.slug == slug and removed is None:
+                removed = entry
+            else:
+                new_models.append(entry)
+        if removed is None:
+            return None
+        manifest.models = new_models
+        write_manifest(manifest)
+        return removed
+
 
 # Per-URI locks serialise the full pull lifecycle (cache check → download →
 # manifest write) so two concurrent requests for the *same* source_uri cannot
