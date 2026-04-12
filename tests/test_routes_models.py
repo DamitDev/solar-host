@@ -1,11 +1,15 @@
-"""Tests for GET /models endpoint (solar_host/routes/models.py)."""
+"""Tests for GET /models, and DELETE /models/{name} endpoints (solar_host/routes/models.py)."""
 
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
+from solar_host.config import config_manager
 from solar_host.main import app
+from solar_host.models.base import Instance, InstanceStatus
+from solar_host.models.huggingface import HuggingFaceCausalConfig
+from solar_host.models.llamacpp import LlamaCppConfig
 from solar_host.models_manager import (
     Manifest,
     ManifestEntry,
@@ -195,3 +199,235 @@ class TestManifestOnlyNoDirectoryScan:
         assert len(data) == 1
         assert data[0]["name"] == "repo--iris-osl--v3"
         assert data[0]["size_bytes"] == 100
+
+
+# ---------------------------------------------------------------------------
+# DELETE /models/{name}
+# ---------------------------------------------------------------------------
+
+_SLUG = "repo--iris-osl--v3"
+_SOURCE_URI = "repo://iris-osl:v3"
+
+
+def _make_llamacpp_instance(
+    instance_id: str,
+    model_path: str,
+    status: InstanceStatus = InstanceStatus.RUNNING,
+) -> Instance:
+    cfg = LlamaCppConfig(model=model_path, alias="test:model")
+    return Instance(id=instance_id, config=cfg, status=status)
+
+
+def _make_hf_instance(
+    instance_id: str,
+    model_id: str,
+    status: InstanceStatus = InstanceStatus.RUNNING,
+) -> Instance:
+    cfg = HuggingFaceCausalConfig(model_id=model_id, alias="test:hf")
+    return Instance(id=instance_id, config=cfg, status=status)
+
+
+class TestDeleteModel:
+    # --- Authentication ---
+
+    def test_delete_requires_auth_missing_key(self, client: TestClient):
+        resp = client.delete(f"/models/{_SLUG}")
+        assert resp.status_code == 401
+
+    def test_delete_requires_auth_wrong_key(self, client: TestClient):
+        resp = client.delete(f"/models/{_SLUG}", headers={"X-API-Key": "wrong"})
+        assert resp.status_code == 401
+
+    # --- 404 ---
+
+    def test_delete_missing_model_returns_404(self, client: TestClient):
+        ensure_models_dir()
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
+
+    # --- 200 basic success ---
+
+    def test_delete_success_returns_200(self, client: TestClient, _isolated_env: Path):
+        ensure_models_dir()
+        add_manifest_entry(_make_entry())
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == _SLUG
+        assert "deleted" in body["detail"].lower()
+
+    def test_delete_removes_manifest_entry(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        ensure_models_dir()
+        add_manifest_entry(_make_entry())
+        client.delete(f"/models/{_SLUG}", headers=_headers())
+        # After delete the entry must be gone from the manifest.
+        resp = client.get("/models", headers=_headers())
+        assert resp.json() == []
+
+    def test_delete_removes_directory_from_disk(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        (model_dir / "model.gguf").write_bytes(b"x" * 64)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+        client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert not model_dir.exists()
+
+    def test_delete_manifest_only_no_dir_succeeds(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Manifest entry present but directory already gone — still returns 200."""
+        ensure_models_dir()
+        add_manifest_entry(_make_entry(path=str((_isolated_env / _SLUG).resolve())))
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 200
+
+    # --- 409 in-use checks ---
+
+    def test_delete_in_use_llamacpp_running_returns_409(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        gguf = model_dir / "model.gguf"
+        gguf.write_bytes(b"x" * 32)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+
+        instance = _make_llamacpp_instance("inst-1", str(gguf), InstanceStatus.RUNNING)
+        monkeypatch.setattr(config_manager, "instances", {"inst-1": instance})
+
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 409
+        assert "inst-1" in resp.json()["detail"]
+
+    def test_delete_in_use_llamacpp_starting_returns_409(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        gguf = model_dir / "model.gguf"
+        gguf.write_bytes(b"x" * 32)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+
+        instance = _make_llamacpp_instance("inst-2", str(gguf), InstanceStatus.STARTING)
+        monkeypatch.setattr(config_manager, "instances", {"inst-2": instance})
+
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 409
+
+    def test_delete_in_use_llamacpp_stopping_returns_409(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        gguf = model_dir / "model.gguf"
+        gguf.write_bytes(b"x" * 32)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+
+        instance = _make_llamacpp_instance("inst-3", str(gguf), InstanceStatus.STOPPING)
+        monkeypatch.setattr(config_manager, "instances", {"inst-3": instance})
+
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 409
+
+    def test_delete_in_use_huggingface_local_path_returns_409(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        ensure_models_dir()
+        model_dir = _isolated_env / "hf--org--mymodel"
+        model_dir.mkdir()
+        add_manifest_entry(
+            _make_entry(
+                slug="hf--org--mymodel",
+                source_uri="huggingface://org/mymodel",
+                path=str(model_dir.resolve()),
+            )
+        )
+
+        instance = _make_hf_instance(
+            "inst-hf-1", str(model_dir.resolve()), InstanceStatus.RUNNING
+        )
+        monkeypatch.setattr(config_manager, "instances", {"inst-hf-1": instance})
+
+        resp = client.delete("/models/hf--org--mymodel", headers=_headers())
+        assert resp.status_code == 409
+        assert "inst-hf-1" in resp.json()["detail"]
+
+    def test_delete_huggingface_hub_id_not_blocked(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        """An HF instance using a Hub ID (not a local path) must NOT block deletion."""
+        ensure_models_dir()
+        model_dir = _isolated_env / "hf--org--mymodel"
+        model_dir.mkdir()
+        add_manifest_entry(
+            _make_entry(
+                slug="hf--org--mymodel",
+                source_uri="huggingface://org/mymodel",
+                path=str(model_dir.resolve()),
+            )
+        )
+
+        # model_id is a Hub ID — not an absolute path
+        instance = _make_hf_instance("inst-hf-2", "org/mymodel", InstanceStatus.RUNNING)
+        monkeypatch.setattr(config_manager, "instances", {"inst-hf-2": instance})
+
+        resp = client.delete("/models/hf--org--mymodel", headers=_headers())
+        assert resp.status_code == 200
+
+    def test_delete_stopped_instance_does_not_block(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        """A STOPPED instance that references the model must not prevent deletion."""
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        gguf = model_dir / "model.gguf"
+        gguf.write_bytes(b"x" * 32)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+
+        instance = _make_llamacpp_instance(
+            "inst-stopped", str(gguf), InstanceStatus.STOPPED
+        )
+        monkeypatch.setattr(config_manager, "instances", {"inst-stopped": instance})
+
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 200
+
+    def test_delete_failed_instance_does_not_block(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        """A FAILED instance that references the model must not prevent deletion."""
+        ensure_models_dir()
+        model_dir = _isolated_env / _SLUG
+        model_dir.mkdir()
+        gguf = model_dir / "model.gguf"
+        gguf.write_bytes(b"x" * 32)
+        add_manifest_entry(_make_entry(path=str(model_dir.resolve())))
+
+        instance = _make_llamacpp_instance(
+            "inst-failed", str(gguf), InstanceStatus.FAILED
+        )
+        monkeypatch.setattr(config_manager, "instances", {"inst-failed": instance})
+
+        resp = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp.status_code == 200
+
+    def test_delete_second_call_returns_404(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Deleting the same model twice: first call 200, second call 404."""
+        ensure_models_dir()
+        add_manifest_entry(_make_entry())
+        resp1 = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp1.status_code == 200
+        resp2 = client.delete(f"/models/{_SLUG}", headers=_headers())
+        assert resp2.status_code == 404

@@ -1,4 +1,4 @@
-"""GET /models and POST /models/pull routes.
+"""GET /models, POST /models/pull, and DELETE /models/{name} routes.
 
 GET /models — lists models recorded in MODELS_DIR/manifest.json.
 Per S-009, the manifest is the single source of truth. This endpoint does not
@@ -8,16 +8,23 @@ returned. Missing or invalid manifest yields an empty list (see read_manifest).
 POST /models/pull — pulls a model from Harbor (ORAS) or HuggingFace Hub and
 records it in the manifest. Returns the local path and whether it was a cache
 hit. Per S-015 / spec Section 3.6.
+
+DELETE /models/{name} — removes a model from disk and the manifest. Rejects
+the request with 409 if any active instance references the model. Per S-017.
 """
 
 import asyncio
-from typing import List, Literal, Optional
+import os
+from pathlib import Path
+from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from solar_host import models_manager
+from solar_host.config import config_manager
+from solar_host.models.base import InstanceStatus
 from solar_host.models_manager import ModelPullError, read_manifest
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -110,7 +117,7 @@ class PullResponse(BaseModel):
         507: {"description": "Insufficient disk space"},
     },
 )
-async def pull_model(req: PullRequest) -> PullResponse:
+async def pull_model(req: PullRequest) -> Union[PullResponse, JSONResponse]:
     """Pull a model from Harbor or HuggingFace Hub.
 
     Checks the manifest cache first. On a cache hit the stored path is returned
@@ -150,3 +157,99 @@ async def pull_model(req: PullRequest) -> PullResponse:
         )
 
     return PullResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /models/{name}
+# ---------------------------------------------------------------------------
+
+# Statuses that mean an instance is actively using its model files.
+_ACTIVE_STATUSES = {
+    InstanceStatus.RUNNING,
+    InstanceStatus.STARTING,
+    InstanceStatus.STOPPING,
+}
+
+
+def _instance_uses_model(instance_config: object, model_dir: Path) -> bool:
+    """Return True if *instance_config* references a path under *model_dir*.
+
+    For LlamaCpp configs the ``model`` field is always a filesystem path to a
+    GGUF file.  For HuggingFace configs the ``model_id`` may be a Hub ID (e.g.
+    ``meta-llama/Llama-2-7b-hf``) or a local absolute path; only absolute
+    paths are checked against the model directory.
+    """
+    backend_type: str = getattr(instance_config, "backend_type", "")
+
+    if backend_type == "llamacpp":
+        instance_model = getattr(instance_config, "model", None)
+        if not instance_model:
+            return False
+        resolved = Path(instance_model).resolve()
+        return resolved == model_dir or resolved.is_relative_to(model_dir)
+
+    if backend_type.startswith("huggingface_"):
+        model_id: str = getattr(instance_config, "model_id", None) or ""
+        if not os.path.isabs(model_id):
+            # Hub ID (e.g. "org/model") — not a local path, skip.
+            return False
+        resolved = Path(model_id).resolve()
+        return resolved == model_dir or resolved.is_relative_to(model_dir)
+
+    return False
+
+
+def _find_using_instance(model_dir: Path) -> Optional[str]:
+    """Return the ID of the first active instance using *model_dir*, or None."""
+    for instance in config_manager.get_all_instances():
+        if instance.status not in _ACTIVE_STATUSES:
+            continue
+        if _instance_uses_model(instance.config, model_dir):
+            return instance.id
+    return None
+
+
+class DeleteResponse(BaseModel):
+    """Response body for DELETE /models/{name}."""
+
+    detail: str
+    name: str
+
+
+@router.delete(
+    "/{name}",
+    response_model=DeleteResponse,
+    summary="Delete a managed model",
+    responses={
+        200: {"description": "Model deleted successfully"},
+        404: {"description": "Model not found in manifest"},
+        409: {"description": "Model is in use by a running instance"},
+    },
+)
+async def delete_model(name: str) -> DeleteResponse:
+    """Delete a model from disk and remove it from the manifest.
+
+    The ``name`` path parameter must match the slug returned by ``GET /models``.
+    Returns 404 if the model is not in the manifest.  Returns 409 if any
+    instance with status ``running``, ``starting``, or ``stopping`` references
+    the model — stop the instance first.
+    """
+
+    def _delete() -> DeleteResponse:
+        entry = models_manager.get_manifest_entry_by_slug(name)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        model_dir = Path(entry.path).resolve()
+        using_id = _find_using_instance(model_dir)
+        if using_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Model is in use by instance {using_id}. Stop the instance first.",
+            )
+
+        models_manager.delete_model_files(entry.path)
+        models_manager.remove_manifest_entry_by_slug(name)
+        return DeleteResponse(detail="Model deleted", name=name)
+
+    return await asyncio.to_thread(_delete)
