@@ -1,16 +1,24 @@
 """Managed models directory and manifest for solar-host.
 
 Provides slug derivation from model source URIs, atomic manifest read/write,
-and CRUD helpers for tracking downloaded models. The manifest file
-(MODELS_DIR/manifest.json) is the single source of truth for cache detection.
+CRUD helpers for tracking downloaded models, and the pull_model() orchestration
+function for downloading from Harbor (ORAS) or HuggingFace Hub.
+
+The manifest file (MODELS_DIR/manifest.json) is the single source of truth for
+cache detection.
 """
 
+import errno
 import json
 import logging
 import os
 import re
+import shutil
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -135,3 +143,265 @@ def remove_manifest_entry(source_uri: str) -> bool:
         return False
     write_manifest(manifest)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Pull orchestration
+# ---------------------------------------------------------------------------
+
+# Protects manifest read-modify-write from concurrent pulls in different threads.
+_manifest_lock = threading.Lock()
+
+# Per-URI locks serialise the full pull lifecycle (cache check → download →
+# manifest write) so two concurrent requests for the *same* source_uri cannot
+# both miss the cache and download the model twice.
+_uri_locks: dict[str, threading.Lock] = {}
+_uri_locks_guard = threading.Lock()
+
+
+def _get_uri_lock(source_uri: str) -> threading.Lock:
+    """Return a per-URI lock, creating one if it doesn't exist yet."""
+    with _uri_locks_guard:
+        if source_uri not in _uri_locks:
+            _uri_locks[source_uri] = threading.Lock()
+        return _uri_locks[source_uri]
+
+
+_SOURCE_URI_PREFIXES = {
+    "harbor": "repo://",
+    "huggingface": "huggingface://",
+}
+
+
+class ModelPullError(Exception):
+    """Raised by pull_model() for expected failure conditions.
+
+    Carries enough context for the route handler to build a spec-compliant
+    error response without leaking internal details.
+    """
+
+    def __init__(self, status_code: int, error: str, detail: str, source_uri: str):
+        self.status_code = status_code
+        self.error = error
+        self.detail = detail
+        self.source_uri = source_uri
+        super().__init__(detail)
+
+
+def _compute_dir_size(path: Path) -> int:
+    """Return total size in bytes of regular files under *path* (no symlinks)."""
+    if not path.is_dir():
+        return 0
+    total = 0
+    for entry in path.rglob("*"):
+        if not entry.is_symlink() and entry.is_file():
+            try:
+                total += entry.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _pull_harbor(
+    harbor_ref: str,
+    target_dir: Path,
+    source_uri: str,
+) -> None:
+    """Download a Harbor OCI artifact via ORAS into *target_dir*.
+
+    Credentials must have been validated by the caller before this is invoked.
+    """
+    from harbor_oci_client import OrasHelper  # type: ignore[import-untyped]
+
+    parsed = urlparse(settings.harbor_url)
+    hostname = parsed.hostname or settings.harbor_url
+
+    oras = OrasHelper(
+        hostname=hostname,
+        username=settings.harbor_username,
+        password=settings.harbor_password,
+    )
+    oras.pull(harbor_ref, outdir=str(target_dir))
+
+
+def _pull_huggingface(
+    model_id: str,
+    target_dir: Path,
+    source_uri: str,
+) -> None:
+    """Download a HuggingFace Hub model snapshot into *target_dir*."""
+    import huggingface_hub  # type: ignore[import-untyped]
+
+    hf_token: Optional[str] = settings.hf_token or None
+
+    huggingface_hub.snapshot_download(
+        repo_id=model_id,
+        local_dir=str(target_dir),
+        token=hf_token,
+    )
+
+
+def pull_model(
+    *,
+    source: str,
+    source_uri: str,
+    harbor_ref: Optional[str] = None,
+    model_id: Optional[str] = None,
+    digest: Optional[str] = None,
+) -> dict:
+    """Download a model from Harbor or HuggingFace Hub and record it in the manifest.
+
+    This function is synchronous and intended to be called via
+    ``asyncio.to_thread()`` from the async route handler.
+
+    Returns a dict with keys ``path``, ``cached``, and ``source_uri``.
+    Raises ``ModelPullError`` for all expected failure conditions.
+    """
+    # 1. Validate that source_uri scheme matches the declared source.
+    expected_prefix = _SOURCE_URI_PREFIXES.get(source)
+    if expected_prefix is None:
+        raise ModelPullError(
+            400, "invalid_request", f"Unsupported source: {source!r}", source_uri
+        )
+    if not source_uri.startswith(expected_prefix):
+        raise ModelPullError(
+            400,
+            "invalid_request",
+            f"source_uri {source_uri!r} does not match source type {source!r} "
+            f"(expected prefix {expected_prefix!r})",
+            source_uri,
+        )
+
+    # Acquire a per-URI lock so that concurrent pulls for the *same* source_uri
+    # are serialised end-to-end.  The second caller will block here, then see
+    # the cache hit once the first caller finishes.
+    uri_lock = _get_uri_lock(source_uri)
+    with uri_lock:
+        # 2. Cache check — manifest is the single source of truth.
+        cached_entry = get_manifest_entry(source_uri)
+        if cached_entry is not None:
+            return {"path": cached_entry.path, "cached": True, "source_uri": source_uri}
+
+        # 3. Derive slug and target directory.
+        try:
+            slug = source_uri_to_slug(source_uri)
+        except ValueError as exc:
+            raise ModelPullError(400, "invalid_request", str(exc), source_uri) from exc
+
+        target_dir = get_models_dir() / slug
+
+        # 4. Validate credentials before touching the filesystem.
+        if source == "harbor":
+            if not all(
+                [
+                    settings.harbor_url,
+                    settings.harbor_username,
+                    settings.harbor_password,
+                ]
+            ):
+                raise ModelPullError(
+                    500,
+                    "credentials_missing",
+                    "Harbor credentials not configured. Set HARBOR_URL, HARBOR_USERNAME, and HARBOR_PASSWORD.",
+                    source_uri,
+                )
+
+        # 5. Remove any stale/partial directory from a previous failed pull.
+        if target_dir.exists():
+            logger.warning("Removing stale model directory before pull: %s", target_dir)
+            shutil.rmtree(target_dir, ignore_errors=True)
+
+        # 6. Download — wrap in try/except to clean up on failure.
+        try:
+            if source == "harbor":
+                _pull_harbor(harbor_ref or "", target_dir, source_uri)
+            else:
+                _pull_huggingface(model_id or "", target_dir, source_uri)
+        except ModelPullError:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise
+        except OSError as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            if exc.errno == errno.ENOSPC:
+                raise ModelPullError(
+                    507, "insufficient_storage", "Insufficient disk space.", source_uri
+                ) from exc
+            raise ModelPullError(
+                500, "model_pull_failed", str(exc), source_uri
+            ) from exc
+        except Exception as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            _map_download_exception(exc, source_uri)
+
+        # 7. Compute size of downloaded files.
+        size_bytes = _compute_dir_size(target_dir)
+
+        # 8. Update manifest atomically under lock to prevent concurrent write
+        #    races between pulls for *different* URIs finishing simultaneously.
+        entry = ManifestEntry(
+            slug=slug,
+            source_uri=source_uri,
+            path=str(target_dir.resolve()),
+            size_bytes=size_bytes,
+            digest=digest,
+            downloaded_at=datetime.now(timezone.utc).isoformat(),
+        )
+        with _manifest_lock:
+            add_manifest_entry(entry)
+
+        logger.info("Model pulled successfully: %s -> %s", source_uri, target_dir)
+        return {
+            "path": str(target_dir.resolve()),
+            "cached": False,
+            "source_uri": source_uri,
+        }
+
+
+def _map_download_exception(exc: Exception, source_uri: str) -> None:
+    """Re-raise a library exception as a ModelPullError with an appropriate HTTP status.
+
+    Always raises — never returns.
+    """
+    exc_type = type(exc).__name__
+    module = type(exc).__module__ or ""
+
+    # harbor-oci-client exceptions
+    if module.startswith("harbor_oci_client"):
+        if exc_type == "HarborConnectionError":
+            raise ModelPullError(
+                502,
+                "source_unreachable",
+                f"Harbor registry unreachable: {exc}",
+                source_uri,
+            ) from exc
+        if exc_type == "HarborAuthError":
+            raise ModelPullError(
+                401, "auth_failed", f"Harbor authentication failed: {exc}", source_uri
+            ) from exc
+        if exc_type == "ArtifactNotFoundError":
+            raise ModelPullError(
+                404, "not_found", f"Artifact not found in Harbor: {exc}", source_uri
+            ) from exc
+        raise ModelPullError(
+            502, "source_unreachable", f"Harbor error: {exc}", source_uri
+        ) from exc
+
+    # huggingface_hub exceptions
+    if module.startswith("huggingface_hub"):
+        if exc_type == "RepositoryNotFoundError":
+            raise ModelPullError(
+                404, "not_found", f"HuggingFace repository not found: {exc}", source_uri
+            ) from exc
+        if exc_type == "GatedRepoError":
+            raise ModelPullError(
+                401,
+                "auth_failed",
+                f"HuggingFace repository is gated: {exc}",
+                source_uri,
+            ) from exc
+        raise ModelPullError(
+            502, "source_unreachable", f"HuggingFace Hub error: {exc}", source_uri
+        ) from exc
+
+    # Fallback
+    raise ModelPullError(500, "model_pull_failed", str(exc), source_uri) from exc

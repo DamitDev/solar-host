@@ -8,7 +8,7 @@ version = "0.0.0.dev"
 description = "Process manager for model inference backends (llama.cpp, HuggingFace)"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "DamitDev" }]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -16,7 +16,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -30,6 +29,8 @@ dependencies = [
     "python-socketio[asyncio_client]",
     "Pebble>=5.0.7",
     "psutil>=6.1.0",
+    "harbor-oci-client>=0.1.0",
+    "huggingface-hub>=1.10.1",
 ]
 
 [project.optional-dependencies]
