@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # Allow connecting to solar-control over HTTPS/WSS with invalid certificates
     insecure: bool = False
 
+    # Harbor registry credentials (required for repo:// pulls)
+    harbor_url: str = ""
+    harbor_username: str = ""
+    harbor_password: str = ""
+
+    # HuggingFace Hub token (optional for public models, required for gated models)
+    hf_token: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
