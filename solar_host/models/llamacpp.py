@@ -23,6 +23,10 @@ class LlamaCppConfig(BaseModel):
         return data
 
     model: str = Field(..., description="Path to the GGUF model file")
+    mmproj: Optional[str] = Field(
+        default=None,
+        description="Path to multimodal projector GGUF file for vision models",
+    )
     alias: str = Field(..., description="Model alias (e.g., gpt-oss:120b)")
     threads: int = Field(default=1, description="Number of threads")
     n_gpu_layers: int = Field(default=999, description="Number of GPU layers")

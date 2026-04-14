@@ -120,6 +120,10 @@ class LlamaCppRunner(BackendRunner):
         if ot_value and ot_value.strip():
             cmd.extend(["-ot", ot_value])
 
+        mmproj = getattr(config, "mmproj", None)
+        if mmproj and mmproj.strip():
+            cmd.extend(["--mmproj", mmproj.strip()])
+
         # Model type flags
         model_type = getattr(config, "model_type", "llm")
         if model_type == "embedding":
