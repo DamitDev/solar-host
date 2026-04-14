@@ -27,6 +27,10 @@ class LlamaCppConfig(BaseModel):
         default=None,
         description="Path to multimodal projector GGUF file for vision models",
     )
+    mmproj_offload: bool = Field(
+        default=True,
+        description="Whether to GPU-offload the multimodal projector (default: enabled)",
+    )
     alias: str = Field(..., description="Model alias (e.g., gpt-oss:120b)")
     threads: int = Field(default=1, description="Number of threads")
     n_gpu_layers: int = Field(default=999, description="Number of GPU layers")

@@ -123,6 +123,8 @@ class LlamaCppRunner(BackendRunner):
         mmproj = getattr(config, "mmproj", None)
         if mmproj and mmproj.strip():
             cmd.extend(["--mmproj", mmproj.strip()])
+            if not getattr(config, "mmproj_offload", True):
+                cmd.append("--no-mmproj-offload")
 
         # Model type flags
         model_type = getattr(config, "model_type", "llm")
