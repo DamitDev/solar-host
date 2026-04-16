@@ -34,9 +34,6 @@ class LlamaCppRunner(BackendRunner):
         self._re_print_timing = re.compile(
             r"slot\s+print_timing:\s+id\s+(\d+)\s*\|\s*task\s+(-?\d+)\s*\|"
         )
-        self._re_prompt_eval_line = re.compile(
-            r"prompt eval time\s*=\s*([0-9.]+)\s*ms\s*/\s*(\d+)\s*tokens\s*\(\s*([0-9.]+)\s*ms per token,\s*([0-9.]+)\s*tokens per second\)"
-        )
         self._re_decode_eval_line = re.compile(
             r"\s*eval time\s*=\s*([0-9.]+)\s*ms\s*/\s*(\d+)\s*tokens\s*\(\s*([0-9.]+)\s*ms per token,\s*([0-9.]+)\s*tokens per second\)"
         )

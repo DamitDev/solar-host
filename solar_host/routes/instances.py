@@ -216,39 +216,36 @@ async def get_last_generation(
     if not metrics:
         raise HTTPException(status_code=404, detail="No generation metrics available")
 
-    # Apply filters
-    try:
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
 
-        def parse_iso(ts: str | None):
-            if not ts:
-                return None
-            try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(
-                    timezone.utc
-                )
-            except Exception:
-                return None
+    def parse_iso(ts: str | None):
+        if not ts:
+            return None
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
 
-        finished_dt = parse_iso(metrics.finished_at)
-        if after:
+    finished_dt = parse_iso(metrics.finished_at)
+
+    if after:
+        try:
             after_dt = parse_iso(after)
-            if after_dt and finished_dt and finished_dt < after_dt:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No generation metrics after the specified timestamp",
-                )
-        if within_s is not None and within_s >= 0:
-            now_dt = datetime.now(timezone.utc)
-            if finished_dt and (now_dt - finished_dt).total_seconds() > float(within_s):
-                raise HTTPException(
-                    status_code=404,
-                    detail="No recent generation metrics within the specified window",
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        # On any parsing error, return the metrics without filtering
-        pass
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400, detail=f"Invalid 'after' timestamp: {after!r}"
+            )
+        if after_dt and finished_dt and finished_dt < after_dt:
+            raise HTTPException(
+                status_code=404,
+                detail="No generation metrics after the specified timestamp",
+            )
+
+    if within_s is not None and within_s >= 0:
+        now_dt = datetime.now(timezone.utc)
+        if finished_dt and (now_dt - finished_dt).total_seconds() > float(within_s):
+            raise HTTPException(
+                status_code=404,
+                detail="No recent generation metrics within the specified window",
+            )
 
     return metrics

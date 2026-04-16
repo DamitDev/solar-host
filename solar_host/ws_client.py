@@ -8,9 +8,12 @@ handling:
 """
 
 import asyncio
+import logging
 import ssl
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 try:
     import socketio
@@ -85,11 +88,11 @@ class SolarControlClient:
     async def start(self):
         """Start the Socket.IO client and connect to solar-control."""
         if not self.control_url:
-            print("SolarControlClient: No control URL configured, skipping connection")
+            logger.info("SolarControlClient: No control URL configured, skipping connection")
             return
 
         if not HAS_SOCKETIO:
-            print(
+            logger.warning(
                 "SolarControlClient: python-socketio not installed, skipping connection"
             )
             return
@@ -97,7 +100,7 @@ class SolarControlClient:
         self._running = True
         self._main_loop = asyncio.get_running_loop()
         self._connection_task = asyncio.create_task(self._run())
-        print(f"SolarControlClient: Starting connection to {self.base_url}")
+        logger.info("SolarControlClient: Starting connection to %s", self.base_url)
 
     async def stop(self):
         """Stop the Socket.IO client and disconnect."""
@@ -118,7 +121,7 @@ class SolarControlClient:
             self._sio = None
 
         self._connected = False
-        print("SolarControlClient: Stopped")
+        logger.info("SolarControlClient: Stopped")
 
     async def reconnect(self) -> bool:
         """Force reconnection. Resets backoff and restarts the connection loop.
@@ -137,7 +140,7 @@ class SolarControlClient:
                 await self._connection_task
             except asyncio.CancelledError:
                 pass
-        print("SolarControlClient: Reconnect requested, restarting connection loop")
+        logger.info("SolarControlClient: Reconnect requested, restarting connection loop")
         self._connection_task = asyncio.create_task(self._run())
         return True
 
@@ -165,6 +168,7 @@ class SolarControlClient:
             ssl_verify=ssl_verify,
             http_session=http_session,
             handle_sigint=False,
+            ping_interval=host_settings.ws_ping_interval,
         )
 
         sio.register_namespace(_HostNamespace(self))
@@ -188,7 +192,7 @@ class SolarControlClient:
                 break
             except Exception as e:
                 if self._running:
-                    print(f"SolarControlClient: Connection error: {e}")
+                    logger.warning("SolarControlClient: Connection error: %s", e)
                     await asyncio.sleep(outer_backoff)
                     outer_backoff = min(outer_backoff * 2, reconnect_max_delay)
 
@@ -201,7 +205,7 @@ class SolarControlClient:
     def _on_connect(self):
         """Called when connected to /hosts namespace."""
         self._connected = True
-        print(f"SolarControlClient: Connected to {self.base_url}")
+        logger.info("SolarControlClient: Connected to %s", self.base_url)
         if self._registration_task and not self._registration_task.done():
             self._registration_task.cancel()
         self._registration_task = asyncio.create_task(self._send_registration())
@@ -225,15 +229,16 @@ class SolarControlClient:
         self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
-        print(f"SolarControlClient: Registered as '{host_name}' (id: {self.host_id})")
+        logger.info("SolarControlClient: Registered as '%s' (id: %s)", host_name, self.host_id)
         if was_pending:
             asyncio.create_task(self._post_approval_sync())
 
     def _on_pending(self, data: dict):
         """Handle pending event - host is waiting for admin approval."""
         self._pending = True
-        print(
-            f"SolarControlClient: Waiting for admin approval (pending_id: {data.get('pending_id', '?')})"
+        logger.info(
+            "SolarControlClient: Waiting for admin approval (pending_id: %s)",
+            data.get("pending_id", "?"),
         )
 
     def _on_rejected(self, data: dict):
@@ -246,7 +251,7 @@ class SolarControlClient:
         self._pending = False
         self._running = False
         reason = data.get("reason", "No reason given")
-        print(f"SolarControlClient: Registration rejected: {reason}. Stopping client.")
+        logger.warning("SolarControlClient: Registration rejected: %s. Stopping client.", reason)
 
     async def _send_registration(self):
         """Send registration event with instance list."""
@@ -303,7 +308,7 @@ class SolarControlClient:
         try:
             await self._sio.emit(event, data, namespace=self.NAMESPACE)
         except Exception as e:
-            print(f"SolarControlClient: Emit error: {e}")
+            logger.warning("SolarControlClient: Emit error: %s", e)
 
     async def send_log_batch(self, entries: List[dict]):
         """Send a batch of log messages to solar-control in a single emit."""
@@ -437,17 +442,16 @@ def init_clients(settings) -> List[SolarControlClient]:
     global solar_control_clients
 
     if not settings.solar_control_url:
-        print("SolarControlClient: SOLAR_CONTROL_URL not configured")
+        logger.info("SolarControlClient: SOLAR_CONTROL_URL not configured")
         return []
 
     if not settings.api_key:
-        print("SolarControlClient: API_KEY not configured")
+        logger.warning("SolarControlClient: API_KEY not configured")
         return []
 
-    # Single URL - take first if comma-separated
     url = settings.solar_control_url.split(",")[0].strip()
     if not url:
-        print("SolarControlClient: No valid URL found")
+        logger.warning("SolarControlClient: No valid URL found")
         return []
 
     solar_control_clients = [
@@ -458,7 +462,7 @@ def init_clients(settings) -> List[SolarControlClient]:
             insecure=settings.insecure,
         )
     ]
-    print("SolarControlClient: Configured 1 connection")
+    logger.info("SolarControlClient: Configured 1 connection")
     return solar_control_clients
 
 

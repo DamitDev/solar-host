@@ -41,10 +41,12 @@ def get_memory_info() -> Optional[Dict[str, Union[float, str]]]:
 
     system = platform.system()
 
-    if system == "Darwin":  # macOS
+    if system == "Darwin":
         result = _get_mac_memory()
-    else:  # Windows or Linux
+    else:
         result = _get_nvidia_memory()
+        if result is None:
+            result = _get_system_memory()
 
     # Update cache
     if result:
@@ -90,27 +92,24 @@ def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
         import pynvml  # type: ignore
 
         pynvml.nvmlInit()
-        device_count = pynvml.nvmlDeviceGetCount()
+        try:
+            device_count = pynvml.nvmlDeviceGetCount()
+            if device_count == 0:
+                return None
 
-        if device_count == 0:
-            return None
+            total_used = 0
+            total_capacity = 0
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                total_used += info.used
+                total_capacity += info.total
+        finally:
+            pynvml.nvmlShutdown()
 
-        total_used = 0
-        total_capacity = 0
-
-        for i in range(device_count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            total_used += info.used
-            total_capacity += info.total
-
-        pynvml.nvmlShutdown()
-
-        # Convert bytes to GB
         used_gb = total_used / (1024**3)
         total_gb = total_capacity / (1024**3)
         percent = (total_used / total_capacity * 100) if total_capacity > 0 else 0
-
         available_gb = total_gb - used_gb
 
         return {
@@ -121,7 +120,24 @@ def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
             "memory_type": "VRAM",
         }
     except Exception:
-        # No NVIDIA GPU or driver not available
+        return None
+
+
+def _get_system_memory() -> Optional[Dict[str, Union[float, str]]]:
+    """Get system RAM info via psutil (fallback for Linux without NVIDIA)."""
+    try:
+        mem = psutil.virtual_memory()
+        used_gb = mem.used / (1024**3)
+        total_gb = mem.total / (1024**3)
+        available_gb = total_gb - used_gb
+        return {
+            "used_gb": round(used_gb, 2),
+            "total_gb": round(total_gb, 2),
+            "available_gb": round(available_gb, 2),
+            "percent": round(mem.percent, 2),
+            "memory_type": "RAM",
+        }
+    except Exception:
         return None
 
 

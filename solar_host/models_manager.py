@@ -330,9 +330,18 @@ def pull_model(
     uri_lock = _get_uri_lock(source_uri)
     with uri_lock:
         # 2. Cache check — manifest is the single source of truth.
+        #    Verify the files still exist on disk; remove stale entries.
         cached_entry = get_manifest_entry(source_uri)
         if cached_entry is not None:
-            return {"path": cached_entry.path, "cached": True, "source_uri": source_uri}
+            if Path(cached_entry.path).exists():
+                return {"path": cached_entry.path, "cached": True, "source_uri": source_uri}
+            logger.warning(
+                "Manifest entry for %s points to missing path %s, re-pulling",
+                source_uri,
+                cached_entry.path,
+            )
+            with _manifest_lock:
+                remove_manifest_entry(source_uri)
 
         # 3. Derive slug and target directory.
         try:
