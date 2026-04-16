@@ -563,7 +563,7 @@ class ProcessManager:
                     process.kill()
                     await asyncio.to_thread(process.wait)
 
-                del self.processes[instance_id]
+                self.processes.pop(instance_id, None)
 
             self._purge_instance_resources(instance_id, call_runner_on_stop=True)
 
