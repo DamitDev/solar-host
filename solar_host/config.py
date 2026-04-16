@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from pydantic_settings import BaseSettings
 
-logger = logging.getLogger(__name__)
-
 from solar_host.models.base import Instance, InstanceStatus
 from solar_host.models.llamacpp import LlamaCppConfig
 from solar_host.models.huggingface import (
@@ -17,6 +15,8 @@ from solar_host.models.huggingface import (
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):

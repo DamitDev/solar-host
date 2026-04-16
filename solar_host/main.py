@@ -216,9 +216,7 @@ async def get_memory():
             memory_type=str(memory_info["memory_type"]),
         )
     except (KeyError, TypeError, ValueError) as e:
-        raise HTTPException(
-            status_code=503, detail=f"Memory data malformed: {e}"
-        )
+        raise HTTPException(status_code=503, detail=f"Memory data malformed: {e}")
 
 
 @app.post("/reconnect")
@@ -233,7 +231,9 @@ async def reconnect_to_control():
 
     client = get_client()
     if not client:
-        raise HTTPException(status_code=503, detail="No solar-control client configured")
+        raise HTTPException(
+            status_code=503, detail="No solar-control client configured"
+        )
     if client.is_connected:
         return {"status": "already_connected"}
     triggered = await client.reconnect()

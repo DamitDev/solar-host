@@ -334,7 +334,11 @@ def pull_model(
         cached_entry = get_manifest_entry(source_uri)
         if cached_entry is not None:
             if Path(cached_entry.path).exists():
-                return {"path": cached_entry.path, "cached": True, "source_uri": source_uri}
+                return {
+                    "path": cached_entry.path,
+                    "cached": True,
+                    "source_uri": source_uri,
+                }
             logger.warning(
                 "Manifest entry for %s points to missing path %s, re-pulling",
                 source_uri,

@@ -410,7 +410,9 @@ class ProcessManager:
             await asyncio.sleep(1)
         return False
 
-    async def _try_start_instance(self, instance_id: str, attempt: int) -> Optional[bool]:
+    async def _try_start_instance(
+        self, instance_id: str, attempt: int
+    ) -> Optional[bool]:
         """Single start attempt. Returns True/False for final result, None to retry."""
         instance = config_manager.get_instance(instance_id)
         if not instance:
@@ -616,7 +618,10 @@ class ProcessManager:
                 InstanceStatus.RUNNING,
                 InstanceStatus.STARTING,
             ):
-                logger.error("Cannot restart %s: stop failed and instance is still active", instance_id)
+                logger.error(
+                    "Cannot restart %s: stop failed and instance is still active",
+                    instance_id,
+                )
                 return False
         await asyncio.sleep(1)
         return await self.start_instance(instance_id)
@@ -688,7 +693,9 @@ class ProcessManager:
                         )
                         break
         except Exception:
-            logger.debug("Failed to push instances update to solar-control", exc_info=True)
+            logger.debug(
+                "Failed to push instances update to solar-control", exc_info=True
+            )
 
     def delete_instance(self, instance_id: str) -> bool:
         """Delete an instance and notify solar-control."""
@@ -699,7 +706,9 @@ class ProcessManager:
         # Defensively terminate any lingering process
         process = self.processes.pop(instance_id, None)
         if process and process.poll() is None:
-            logger.warning("Terminating orphan process for deleted instance %s", instance_id)
+            logger.warning(
+                "Terminating orphan process for deleted instance %s", instance_id
+            )
             try:
                 process.terminate()
                 process.wait(timeout=5)
@@ -728,7 +737,9 @@ class ProcessManager:
         for instance in config_manager.get_all_instances():
             if instance.status in (InstanceStatus.RUNNING, InstanceStatus.STARTING):
                 logger.info(
-                    "Auto-restarting instance: %s (%s)", instance.id, instance.config.alias
+                    "Auto-restarting instance: %s (%s)",
+                    instance.id,
+                    instance.config.alias,
                 )
                 self._kill_stale_pid(instance.pid)
                 instance.status = InstanceStatus.STOPPED
@@ -753,6 +764,7 @@ class ProcessManager:
             return
         try:
             import signal
+
             os.kill(pid, signal.SIGTERM)
             logger.info("Sent SIGTERM to stale PID %d", pid)
         except ProcessLookupError:

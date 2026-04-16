@@ -88,7 +88,9 @@ class SolarControlClient:
     async def start(self):
         """Start the Socket.IO client and connect to solar-control."""
         if not self.control_url:
-            logger.info("SolarControlClient: No control URL configured, skipping connection")
+            logger.info(
+                "SolarControlClient: No control URL configured, skipping connection"
+            )
             return
 
         if not HAS_SOCKETIO:
@@ -140,7 +142,9 @@ class SolarControlClient:
                 await self._connection_task
             except asyncio.CancelledError:
                 pass
-        logger.info("SolarControlClient: Reconnect requested, restarting connection loop")
+        logger.info(
+            "SolarControlClient: Reconnect requested, restarting connection loop"
+        )
         self._connection_task = asyncio.create_task(self._run())
         return True
 
@@ -228,7 +232,9 @@ class SolarControlClient:
         self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
-        logger.info("SolarControlClient: Registered as '%s' (id: %s)", host_name, self.host_id)
+        logger.info(
+            "SolarControlClient: Registered as '%s' (id: %s)", host_name, self.host_id
+        )
         if was_pending:
             asyncio.create_task(self._post_approval_sync())
 
@@ -250,7 +256,9 @@ class SolarControlClient:
         self._pending = False
         self._running = False
         reason = data.get("reason", "No reason given")
-        logger.warning("SolarControlClient: Registration rejected: %s. Stopping client.", reason)
+        logger.warning(
+            "SolarControlClient: Registration rejected: %s. Stopping client.", reason
+        )
 
     async def _send_registration(self):
         """Send registration event with instance list."""
