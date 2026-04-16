@@ -168,7 +168,6 @@ class SolarControlClient:
             ssl_verify=ssl_verify,
             http_session=http_session,
             handle_sigint=False,
-            ping_interval=host_settings.ws_ping_interval,
         )
 
         sio.register_namespace(_HostNamespace(self))
