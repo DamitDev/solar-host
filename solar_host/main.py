@@ -1,15 +1,20 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
-import asyncio
 
 from solar_host import __version__
 from solar_host.config import settings
+from solar_host.models.base import BackendType
 from solar_host.models_manager import ensure_models_dir, get_models_dir
 from solar_host.process_manager import process_manager
 from solar_host.routes import instances, models, websockets
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
+
+logger = logging.getLogger(__name__)
 
 
 async def health_report_loop():
@@ -23,51 +28,46 @@ async def health_report_loop():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"Health report error: {e}")
+            logger.warning("Health report error: %s", e)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for the application"""
-    # Startup: Auto-restart instances that were running
-    print("Starting Solar Host...")
-    print(f"API Key configured: {settings.api_key[:4]}...")
+    key_hint = settings.api_key[:4] if len(settings.api_key) >= 4 else "***"
+    logger.info("Starting Solar Host...")
+    logger.info("API Key configured: %s...", key_hint)
     if settings.insecure:
-        print(
-            "WARNING: INSECURE mode enabled - TLS certificate verification is disabled"
+        logger.warning(
+            "INSECURE mode enabled - TLS certificate verification is disabled"
         )
 
-    # Ensure the managed models directory exists
     ensure_models_dir()
-    print(f"Models directory: {get_models_dir()}")
+    logger.info("Models directory: %s", get_models_dir())
 
-    # Initialize and start solar-control WebSocket clients
     clients = init_clients(settings)
     health_task = None
     watchdog_task = None
     if clients:
         for client in clients:
             await client.start()
-        # Start the batched emission flush loop
         loop = asyncio.get_running_loop()
         process_manager.ensure_flush_loop(loop)
         health_task = asyncio.create_task(health_report_loop())
-        print(
-            f"Solar Control WebSocket client(s) started ({len(clients)} connection(s))"
+        logger.info(
+            "Solar Control WebSocket client(s) started (%d connection(s))", len(clients)
         )
     else:
-        print("Solar Control WebSocket client not configured (standalone mode)")
+        logger.info("Solar Control WebSocket client not configured (standalone mode)")
 
-    # Periodically reconcile child process state (detect exits without log EOF)
     watchdog_task = asyncio.create_task(process_manager.watchdog_loop())
 
     await process_manager.auto_restart_running_instances()
-    print("Solar Host started successfully")
+    logger.info("Solar Host started successfully")
 
     yield
 
-    # Shutdown: Clean up
-    print("Shutting down Solar Host...")
+    logger.info("Shutting down Solar Host...")
 
     if health_task:
         health_task.cancel()
@@ -95,11 +95,10 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,7 +124,6 @@ async def verify_api_key(request: Request, call_next):
             content={"detail": "Invalid or missing API key"},
             headers={
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Credentials": "true",
                 "Access-Control-Allow-Methods": "*",
                 "Access-Control-Allow-Headers": "*",
             },
@@ -195,11 +193,7 @@ async def root():
         "service": "solar-host",
         "version": __version__,
         "description": "Process manager for model inference backends (llama.cpp, HuggingFace)",
-        "supported_backends": [
-            "llamacpp",
-            "huggingface_causal",
-            "huggingface_classification",
-        ],
+        "supported_backends": [bt.value for bt in BackendType],
     }
 
 
@@ -213,27 +207,16 @@ async def get_memory():
     memory_info = await asyncio.to_thread(get_memory_info)
     if not memory_info:
         raise HTTPException(status_code=503, detail="Memory information not available")
-    # Coerce types explicitly to satisfy typing
     try:
-        used_gb = float(memory_info.get("used_gb"))  # type: ignore[arg-type]
-        total_gb = float(memory_info.get("total_gb"))  # type: ignore[arg-type]
-        available_gb = float(memory_info.get("available_gb"))  # type: ignore[arg-type]
-        percent = float(memory_info.get("percent"))  # type: ignore[arg-type]
-        memory_type = str(memory_info.get("memory_type"))
-    except Exception:
-        used_gb = 0.0
-        total_gb = 0.0
-        available_gb = 0.0
-        percent = 0.0
-        memory_type = "RAM"
-
-    return MemoryInfo(
-        used_gb=used_gb,
-        total_gb=total_gb,
-        available_gb=available_gb,
-        percent=percent,
-        memory_type=memory_type,
-    )
+        return MemoryInfo(
+            used_gb=float(memory_info["used_gb"]),
+            total_gb=float(memory_info["total_gb"]),
+            available_gb=float(memory_info["available_gb"]),
+            percent=float(memory_info["percent"]),
+            memory_type=str(memory_info["memory_type"]),
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(status_code=503, detail=f"Memory data malformed: {e}")
 
 
 @app.post("/reconnect")
@@ -244,13 +227,19 @@ async def reconnect_to_control():
     session has disconnected, prompting an immediate reconnection attempt
     instead of waiting for the next backoff cycle.
     """
+    from fastapi import HTTPException
+
     client = get_client()
     if not client:
-        return {"status": "no_client"}
+        raise HTTPException(
+            status_code=503, detail="No solar-control client configured"
+        )
     if client.is_connected:
         return {"status": "already_connected"}
     triggered = await client.reconnect()
-    return {"status": "reconnecting" if triggered else "failed"}
+    if triggered:
+        return {"status": "reconnecting"}
+    raise HTTPException(status_code=503, detail="Failed to trigger reconnection")
 
 
 def run():

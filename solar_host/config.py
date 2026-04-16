@@ -1,6 +1,9 @@
 """Configuration management for solar-host."""
 
 import json
+import logging
+import os
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from pydantic_settings import BaseSettings
@@ -12,6 +15,8 @@ from solar_host.models.huggingface import (
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -96,14 +101,19 @@ def parse_instance_config(config_data: Dict[str, Any]) -> Any:
     elif backend_type == "huggingface_embedding":
         return HuggingFaceEmbeddingConfig(**config_data)
     else:
-        # Fallback to llamacpp
-        return LlamaCppConfig(**config_data)
+        raise ValueError(f"Unknown backend_type: {backend_type!r}")
 
 
 class ConfigManager:
-    """Manages instance configurations and persistence."""
+    """Manages instance configurations and persistence.
+
+    All public methods are protected by a threading lock so the instance
+    dict and on-disk config.json stay consistent across the asyncio event
+    loop thread and background log-reader threads.
+    """
 
     def __init__(self, config_file: Optional[str] = None):
+        self._lock = threading.Lock()
         self.config_file = Path(config_file or settings.config_file)
         self.instances: Dict[str, Instance] = {}
         self.roles: List[str] = ["inference"]
@@ -111,41 +121,40 @@ class ConfigManager:
 
     def load(self):
         """Load configuration from disk with backward compatibility."""
+        with self._lock:
+            self._load_unlocked()
+
+    def _load_unlocked(self):
         if self.config_file.exists():
             try:
                 with open(self.config_file, "r") as f:
                     data = json.load(f)
                     self.roles = data.get("roles", ["inference"])
+                    self.instances = {}
                     for instance_data in data.get("instances", []):
                         try:
-                            # Migrate config if needed
                             if "config" in instance_data:
                                 instance_data["config"] = migrate_config_data(
                                     instance_data["config"]
                                 )
-
-                            # Parse config into appropriate type
                             config = parse_instance_config(
                                 instance_data.get("config", {})
                             )
-
-                            # Create instance with parsed config
                             instance_data_copy = instance_data.copy()
                             instance_data_copy["config"] = config
-
                             instance = Instance(**instance_data_copy)
                             self.instances[instance.id] = instance
                         except Exception as e:
-                            print(f"Error loading instance: {e}")
+                            logger.warning("Skipping instance during load: %s", e)
                             continue
             except Exception as e:
-                print(f"Error loading config: {e}")
+                logger.error("Error loading config: %s", e)
                 self.instances = {}
         else:
             self.instances = {}
 
-    def save(self):
-        """Save configuration to disk."""
+    def _save_unlocked(self):
+        """Write config to disk atomically (tmp + os.replace)."""
         try:
             data = {
                 "roles": self.roles,
@@ -155,56 +164,69 @@ class ConfigManager:
                 ],
             }
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_file, "w") as f:
+            tmp = self.config_file.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
+            os.replace(tmp, self.config_file)
         except Exception as e:
-            print(f"Error saving config: {e}")
+            logger.error("Error saving config: %s", e)
+
+    def save(self):
+        """Save configuration to disk (thread-safe)."""
+        with self._lock:
+            self._save_unlocked()
 
     def add_instance(self, instance: Instance):
         """Add a new instance."""
-        self.instances[instance.id] = instance
-        self.save()
+        with self._lock:
+            self.instances[instance.id] = instance
+            self._save_unlocked()
 
     def update_instance(self, instance_id: str, instance: Instance):
         """Update an existing instance."""
-        if instance_id in self.instances:
-            self.instances[instance_id] = instance
-            self.save()
+        with self._lock:
+            if instance_id in self.instances:
+                self.instances[instance_id] = instance
+                self._save_unlocked()
 
     def update_instance_runtime(self, instance_id: str, **kwargs):
         """Update ephemeral runtime fields for an instance (no disk write)."""
-        instance = self.instances.get(instance_id)
-        if not instance:
-            return
-        # Only mutate known runtime fields
-        if "busy" in kwargs:
-            instance.busy = bool(kwargs["busy"])
-        if "prefill_progress" in kwargs:
-            instance.prefill_progress = kwargs["prefill_progress"]
-        if "active_slots" in kwargs:
-            instance.active_slots = int(kwargs["active_slots"])
+        with self._lock:
+            instance = self.instances.get(instance_id)
+            if not instance:
+                return
+            if "busy" in kwargs:
+                instance.busy = bool(kwargs["busy"])
+            if "prefill_progress" in kwargs:
+                instance.prefill_progress = kwargs["prefill_progress"]
+            if "active_slots" in kwargs:
+                instance.active_slots = int(kwargs["active_slots"])
 
     def remove_instance(self, instance_id: str):
         """Remove an instance."""
-        if instance_id in self.instances:
-            del self.instances[instance_id]
-            self.save()
+        with self._lock:
+            if instance_id in self.instances:
+                del self.instances[instance_id]
+                self._save_unlocked()
 
     def get_instance(self, instance_id: str) -> Optional[Instance]:
         """Get an instance by ID."""
-        return self.instances.get(instance_id)
+        with self._lock:
+            return self.instances.get(instance_id)
 
     def get_all_instances(self) -> List[Instance]:
         """Get all instances."""
-        return list(self.instances.values())
+        with self._lock:
+            return list(self.instances.values())
 
     def get_running_instances(self) -> List[Instance]:
         """Get all running instances."""
-        return [
-            instance
-            for instance in self.instances.values()
-            if instance.status == InstanceStatus.RUNNING
-        ]
+        with self._lock:
+            return [
+                instance
+                for instance in self.instances.values()
+                if instance.status == InstanceStatus.RUNNING
+            ]
 
 
 # Global config manager instance

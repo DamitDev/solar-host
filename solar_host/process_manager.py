@@ -1,5 +1,6 @@
 """Process manager for solar-host with multi-backend support."""
 
+import logging
 import subprocess
 import socket
 import time
@@ -34,8 +35,11 @@ from solar_host.ws_client import (
     broadcast_instances_update,
 )
 
+logger = logging.getLogger(__name__)
+
 FLUSH_INTERVAL_S = 0.1
 WATCHDOG_INTERVAL_S = 15.0
+MAX_QUEUE_SIZE = 10_000
 _HAS_STDBUF = shutil.which("stdbuf") is not None
 
 
@@ -80,9 +84,10 @@ class ProcessManager:
         # Per-instance runner reference
         self.instance_runners: Dict[str, BackendRunner] = {}
 
-        # Batched emission queues (thread-safe, drained by _flush_loop)
-        self._log_queue: queue.SimpleQueue = queue.SimpleQueue()
-        self._state_queue: queue.SimpleQueue = queue.SimpleQueue()
+        # Batched emission queues (thread-safe, drained by _flush_loop).
+        # Bounded to prevent OOM if the flush loop or WS broadcast stalls.
+        self._log_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+        self._state_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
         self._flush_task: Optional[asyncio.Task] = None
         self._child_exit_lock = threading.Lock()
 
@@ -228,7 +233,7 @@ class ProcessManager:
                         # Parsing errors should not break logging
                         pass
         except Exception as e:
-            print(f"Error reading logs for {instance_id}: {e}")
+            logger.warning("Error reading logs for %s: %s", instance_id, e)
         finally:
             # stdout closed or reader error: child likely exited — reconcile state
             self._handle_child_exit(instance_id, process)
@@ -253,7 +258,8 @@ class ProcessManager:
                 await self._flush_pending()
                 break
             except Exception:
-                pass
+                logger.exception("Error in flush loop")
+                await asyncio.sleep(1)
 
     async def _flush_pending(self):
         """Drain both queues and emit batched events."""
@@ -291,18 +297,25 @@ class ProcessManager:
             except asyncio.CancelledError:
                 break
             except Exception:
-                pass
+                logger.exception("Error in watchdog loop")
+                await asyncio.sleep(1)
 
     def _push_log_event(self, instance_id: str, seq: int, line: str, timestamp: str):
-        """Queue a log event for batched emission (thread-safe, non-blocking)."""
-        self._log_queue.put(
-            {
-                "instance_id": instance_id,
-                "seq": seq,
-                "line": line,
-                "timestamp": timestamp,
-            }
-        )
+        """Queue a log event for batched emission (thread-safe, non-blocking).
+
+        Silently discards events when the queue is full to prevent OOM.
+        """
+        try:
+            self._log_queue.put_nowait(
+                {
+                    "instance_id": instance_id,
+                    "seq": seq,
+                    "line": line,
+                    "timestamp": timestamp,
+                }
+            )
+        except queue.Full:
+            pass
 
     def _emit_state_event(self, instance_id: str, update):
         """Emit a state event from a RuntimeStateUpdate."""
@@ -350,27 +363,33 @@ class ProcessManager:
         self._push_state_event(instance_id, state)
 
     def _push_state_event(self, instance_id: str, state: InstanceRuntimeState):
-        """Queue a state event for batched emission (thread-safe, non-blocking)."""
-        self._state_queue.put(
-            {
-                "instance_id": instance_id,
-                "timestamp": state.timestamp,
-                "data": {
-                    "busy": state.busy,
-                    "phase": state.phase.value if state.phase else None,
-                    "prefill_progress": state.prefill_progress,
-                    "active_slots": state.active_slots,
-                    "slot_id": state.slot_id,
-                    "task_id": state.task_id,
-                    "prefill_prompt_tokens": state.prefill_prompt_tokens,
-                    "generated_tokens": state.generated_tokens,
-                    "decode_tps": state.decode_tps,
-                    "decode_ms_per_token": state.decode_ms_per_token,
-                    "checkpoint_index": state.checkpoint_index,
-                    "checkpoint_total": state.checkpoint_total,
-                },
-            }
-        )
+        """Queue a state event for batched emission (thread-safe, non-blocking).
+
+        Silently discards events when the queue is full to prevent OOM.
+        """
+        try:
+            self._state_queue.put_nowait(
+                {
+                    "instance_id": instance_id,
+                    "timestamp": state.timestamp,
+                    "data": {
+                        "busy": state.busy,
+                        "phase": state.phase.value if state.phase else None,
+                        "prefill_progress": state.prefill_progress,
+                        "active_slots": state.active_slots,
+                        "slot_id": state.slot_id,
+                        "task_id": state.task_id,
+                        "prefill_prompt_tokens": state.prefill_prompt_tokens,
+                        "generated_tokens": state.generated_tokens,
+                        "decode_tps": state.decode_tps,
+                        "decode_ms_per_token": state.decode_ms_per_token,
+                        "checkpoint_index": state.checkpoint_index,
+                        "checkpoint_total": state.checkpoint_total,
+                    },
+                }
+            )
+        except queue.Full:
+            pass
 
     def get_last_generation(self, instance_id: str) -> Optional[GenerationMetrics]:
         """Get the last generation metrics for an instance."""
@@ -382,7 +401,19 @@ class ProcessManager:
         return None
 
     async def start_instance(self, instance_id: str) -> bool:
-        """Start a model server instance."""
+        """Start a model server instance with iterative retry."""
+        for attempt in range(1 + settings.max_retries):
+            result = await self._try_start_instance(instance_id, attempt)
+            if result is not None:
+                return result
+            # result is None means "retry"
+            await asyncio.sleep(1)
+        return False
+
+    async def _try_start_instance(
+        self, instance_id: str, attempt: int
+    ) -> Optional[bool]:
+        """Single start attempt. Returns True/False for final result, None to retry."""
         instance = config_manager.get_instance(instance_id)
         if not instance:
             return False
@@ -392,7 +423,7 @@ class ProcessManager:
             proc = self.processes.get(instance_id)
             if proc and proc.poll() is None:
                 return True
-            # Stale RUNNING: process missing or dead — reset and continue start
+            # Stale RUNNING: process missing or dead -- reset and continue start
             if proc is not None:
                 self.processes.pop(instance_id, None)
             self._purge_instance_resources(instance_id, call_runner_on_stop=True)
@@ -402,21 +433,15 @@ class ProcessManager:
             instance.error_message = None
             config_manager.update_instance(instance_id, instance)
 
-        # Always find an available port on start
         instance.port = self._get_available_port()
 
-        # Get the appropriate runner for this backend type
         runner = get_runner_for_config(instance.config)
         self.instance_runners[instance_id] = runner
-
-        # Initialize parsing context
         self.instance_contexts[instance_id] = runner.initialize_context()
 
-        # Update status
         instance.status = InstanceStatus.STARTING
         instance.error_message = None
 
-        # Set supported endpoints (use model_type for llamacpp differentiation)
         if hasattr(runner, "get_supported_endpoints_for_model_type"):
             model_type = getattr(instance.config, "model_type", "llm")
             instance.supported_endpoints = (
@@ -433,21 +458,15 @@ class ProcessManager:
         config_manager.update_instance(instance_id, instance)
 
         try:
-            # Build command using runner
             cmd = runner.build_command(instance)
 
-            # Create log file
             alias_safe = instance.config.alias.replace(":", "-").replace("/", "-")
             log_file = self.log_dir / f"{alias_safe}_{int(time.time())}.log"
 
-            # Force line-buffered stdout so lines arrive in generation
-            # order (stdout is block-buffered when piped, causing lines
-            # to arrive after subsequent stderr output).
             run_env = os.environ.copy()
             run_env["PYTHONUNBUFFERED"] = "1"
             run_cmd = ["stdbuf", "-oL"] + cmd if _HAS_STDBUF else cmd
 
-            # Start process
             process = subprocess.Popen(
                 run_cmd,
                 stdout=subprocess.PIPE,
@@ -458,7 +477,6 @@ class ProcessManager:
 
             self.processes[instance_id] = process
 
-            # Start log reading thread
             log_thread = threading.Thread(
                 target=self._read_logs,
                 args=(instance_id, process, log_file, runner),
@@ -469,8 +487,6 @@ class ProcessManager:
 
             await asyncio.sleep(2)
 
-            # Re-read instance state - another coroutine (e.g. stop) may have
-            # changed the status while we slept.
             instance = config_manager.get_instance(instance_id)
             if not instance or instance.status not in (
                 InstanceStatus.STARTING,
@@ -487,47 +503,39 @@ class ProcessManager:
                 instance.retry_count = 0
                 config_manager.update_instance(instance_id, instance)
 
-                # Initialize ephemeral runtime state
                 self.state_buffers[instance_id] = deque(maxlen=settings.log_buffer_size)
                 self.state_sequences[instance_id] = 0
                 config_manager.update_instance_runtime(
                     instance_id, busy=False, prefill_progress=None, active_slots=0
                 )
 
-                # Notify runner that process started
                 runner.on_process_started(
                     instance_id, self.instance_contexts[instance_id]
                 )
 
-                # Notify solar-control of instance update
                 self._push_instances_update()
 
                 return True
             else:
-                # Process failed
                 instance.status = InstanceStatus.FAILED
                 instance.error_message = "Process exited immediately"
-                instance.retry_count += 1
+                instance.retry_count = attempt + 1
                 config_manager.update_instance(instance_id, instance)
 
-                # Retry if under limit
                 if instance.retry_count < settings.max_retries:
-                    await asyncio.sleep(1)
-                    return await self.start_instance(instance_id)
-
+                    return None  # signal retry
                 return False
 
         except Exception as e:
-            instance.status = InstanceStatus.FAILED
-            instance.error_message = str(e)
-            instance.retry_count += 1
-            config_manager.update_instance(instance_id, instance)
+            instance = config_manager.get_instance(instance_id)
+            if instance:
+                instance.status = InstanceStatus.FAILED
+                instance.error_message = str(e)
+                instance.retry_count = attempt + 1
+                config_manager.update_instance(instance_id, instance)
 
-            # Retry if under limit
-            if instance.retry_count < settings.max_retries:
-                await asyncio.sleep(1)
-                return await self.start_instance(instance_id)
-
+                if instance.retry_count < settings.max_retries:
+                    return None  # signal retry
             return False
 
     async def stop_instance(self, instance_id: str) -> bool:
@@ -565,6 +573,11 @@ class ProcessManager:
 
                 self.processes.pop(instance_id, None)
 
+            # Wait for log thread to finish before purging resources
+            log_thread = self.log_threads.get(instance_id)
+            if log_thread and log_thread.is_alive():
+                log_thread.join(timeout=5)
+
             self._purge_instance_resources(instance_id, call_runner_on_stop=True)
 
             instance.status = InstanceStatus.STOPPED
@@ -572,10 +585,8 @@ class ProcessManager:
             instance.started_at = None
             config_manager.update_instance(instance_id, instance)
 
-            # Clean up old log file for stopped instances
             await self._cleanup_old_logs(instance.config.alias)
 
-            # Notify solar-control of instance update
             self._push_instances_update()
 
             return True
@@ -596,11 +607,22 @@ class ProcessManager:
                 if log_file.stat().st_mtime < time.time() - 300:  # 5 minutes old
                     log_file.unlink()
         except Exception as e:
-            print(f"Error cleaning up logs: {e}")
+            logger.warning("Error cleaning up logs: %s", e)
 
     async def restart_instance(self, instance_id: str) -> bool:
         """Restart a model server instance."""
-        await self.stop_instance(instance_id)
+        stopped = await self.stop_instance(instance_id)
+        if not stopped:
+            instance = config_manager.get_instance(instance_id)
+            if instance and instance.status in (
+                InstanceStatus.RUNNING,
+                InstanceStatus.STARTING,
+            ):
+                logger.error(
+                    "Cannot restart %s: stop failed and instance is still active",
+                    instance_id,
+                )
+                return False
         await asyncio.sleep(1)
         return await self.start_instance(instance_id)
 
@@ -664,16 +686,16 @@ class ProcessManager:
             clients = get_clients()
             for client in clients:
                 if client.is_connected:
-                    # Get the main event loop (stored when the app starts)
                     loop = getattr(client, "_main_loop", None)
                     if loop and loop.is_running():
                         asyncio.run_coroutine_threadsafe(
                             broadcast_instances_update(), loop
                         )
-                        break  # Only need to schedule once, broadcast handles all
+                        break
         except Exception:
-            # Never let WS errors break instance operations
-            pass
+            logger.debug(
+                "Failed to push instances update to solar-control", exc_info=True
+            )
 
     def delete_instance(self, instance_id: str) -> bool:
         """Delete an instance and notify solar-control."""
@@ -681,18 +703,28 @@ class ProcessManager:
         if not instance:
             return False
 
+        # Defensively terminate any lingering process
+        process = self.processes.pop(instance_id, None)
+        if process and process.poll() is None:
+            logger.warning(
+                "Terminating orphan process for deleted instance %s", instance_id
+            )
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except Exception:
+                process.kill()
+                process.wait()
+
         config_manager.remove_instance(instance_id)
 
-        # Cleanup any lingering buffers
-        self.log_buffers.pop(instance_id, None)
-        self.log_sequences.pop(instance_id, None)
-        self.log_threads.pop(instance_id, None)
-        self.state_buffers.pop(instance_id, None)
-        self.state_sequences.pop(instance_id, None)
-        self.instance_runners.pop(instance_id, None)
-        self.instance_contexts.pop(instance_id, None)
+        # Wait for log thread to finish before removing buffers
+        log_thread = self.log_threads.pop(instance_id, None)
+        if log_thread and log_thread.is_alive():
+            log_thread.join(timeout=3)
 
-        # Notify solar-control of instance update
+        self._purge_instance_resources(instance_id, call_runner_on_stop=False)
+
         self._push_instances_update()
 
         return True
@@ -704,20 +736,41 @@ class ProcessManager:
         """
         for instance in config_manager.get_all_instances():
             if instance.status in (InstanceStatus.RUNNING, InstanceStatus.STARTING):
-                print(
-                    f"Auto-restarting instance: {instance.id} ({instance.config.alias})"
+                logger.info(
+                    "Auto-restarting instance: %s (%s)",
+                    instance.id,
+                    instance.config.alias,
                 )
+                self._kill_stale_pid(instance.pid)
                 instance.status = InstanceStatus.STOPPED
                 instance.pid = None
                 config_manager.update_instance(instance.id, instance)
                 await self.start_instance(instance.id)
             elif instance.status == InstanceStatus.STOPPING:
-                print(
-                    f"Resolving interrupted stop for instance: {instance.id} ({instance.config.alias})"
+                logger.info(
+                    "Resolving interrupted stop for instance: %s (%s)",
+                    instance.id,
+                    instance.config.alias,
                 )
+                self._kill_stale_pid(instance.pid)
                 instance.status = InstanceStatus.STOPPED
                 instance.pid = None
                 config_manager.update_instance(instance.id, instance)
+
+    @staticmethod
+    def _kill_stale_pid(pid: Optional[int]) -> None:
+        """Best-effort kill of a stale PID left from a previous run."""
+        if pid is None:
+            return
+        try:
+            import signal
+
+            os.kill(pid, signal.SIGTERM)
+            logger.info("Sent SIGTERM to stale PID %d", pid)
+        except ProcessLookupError:
+            pass
+        except OSError as e:
+            logger.debug("Could not kill stale PID %d: %s", pid, e)
 
 
 # Global process manager instance

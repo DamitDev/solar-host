@@ -64,7 +64,7 @@ class HuggingFaceRunner(BackendRunner):
         ):
             model_type = "embedding"
         else:
-            model_type = "causal"  # fallback
+            raise RuntimeError(f"Unknown HuggingFace backend_type: {backend_type!r}")
 
         cmd = [
             sys.executable,
@@ -202,13 +202,15 @@ class HuggingFaceRunner(BackendRunner):
         m = self._re_request_complete.search(line)
         if m:
             context["busy"] = False
-            tokens = int(m.group(2))
-            time_ms = float(m.group(3))
+            try:
+                tokens = int(m.group(2))
+                time_ms = float(m.group(3))
+            except (ValueError, TypeError):
+                tokens = 0
+                time_ms = 0.0
 
-            # Calculate TPS
             tps = (tokens / time_ms * 1000) if time_ms > 0 else None
 
-            # Store generation metrics
             if context.get("current_request"):
                 metrics = GenerationMetrics(
                     instance_id=instance_id,
