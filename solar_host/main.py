@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     # Initialize and start solar-control WebSocket clients
     clients = init_clients(settings)
     health_task = None
+    watchdog_task = None
     if clients:
         for client in clients:
             await client.start()
@@ -57,6 +58,9 @@ async def lifespan(app: FastAPI):
     else:
         print("Solar Control WebSocket client not configured (standalone mode)")
 
+    # Periodically reconcile child process state (detect exits without log EOF)
+    watchdog_task = asyncio.create_task(process_manager.watchdog_loop())
+
     await process_manager.auto_restart_running_instances()
     print("Solar Host started successfully")
 
@@ -69,6 +73,13 @@ async def lifespan(app: FastAPI):
         health_task.cancel()
         try:
             await health_task
+        except asyncio.CancelledError:
+            pass
+
+    if watchdog_task:
+        watchdog_task.cancel()
+        try:
+            await watchdog_task
         except asyncio.CancelledError:
             pass
 

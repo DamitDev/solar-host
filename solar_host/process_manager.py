@@ -35,6 +35,7 @@ from solar_host.ws_client import (
 )
 
 FLUSH_INTERVAL_S = 0.1
+WATCHDOG_INTERVAL_S = 15.0
 _HAS_STDBUF = shutil.which("stdbuf") is not None
 
 
@@ -83,6 +84,7 @@ class ProcessManager:
         self._log_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._state_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._flush_task: Optional[asyncio.Task] = None
+        self._child_exit_lock = threading.Lock()
 
     def _is_port_available(self, port: int) -> bool:
         """Check if a port is available (not bound by any process)."""
@@ -117,6 +119,61 @@ class ProcessManager:
 
         return port
 
+    def _purge_instance_resources(
+        self, instance_id: str, *, call_runner_on_stop: bool = True
+    ) -> None:
+        """Remove in-memory runners, buffers, and threads for an instance."""
+        runner = self.instance_runners.get(instance_id)
+        if runner and call_runner_on_stop:
+            context = self.instance_contexts.get(instance_id, {})
+            runner.on_process_stopped(instance_id, context)
+        self.instance_runners.pop(instance_id, None)
+        self.instance_contexts.pop(instance_id, None)
+        self.log_buffers.pop(instance_id, None)
+        self.log_sequences.pop(instance_id, None)
+        self.log_threads.pop(instance_id, None)
+        self.state_buffers.pop(instance_id, None)
+        self.state_sequences.pop(instance_id, None)
+
+    def _handle_child_exit(self, instance_id: str, process: subprocess.Popen) -> None:
+        """Mark instance FAILED when the child process exits unexpectedly.
+
+        Idempotent: safe from log thread EOF and watchdog; skips intentional stops.
+        """
+        with self._child_exit_lock:
+            instance = config_manager.get_instance(instance_id)
+            if not instance:
+                self.processes.pop(instance_id, None)
+                return
+
+            if instance.status not in (
+                InstanceStatus.RUNNING,
+                InstanceStatus.STARTING,
+            ):
+                self.processes.pop(instance_id, None)
+                return
+
+            tracked = self.processes.get(instance_id)
+            if tracked is not process:
+                return
+
+            exit_code = process.poll()
+            if exit_code is None:
+                return
+
+            del self.processes[instance_id]
+
+            instance.status = InstanceStatus.FAILED
+            instance.error_message = (
+                f"Process exited unexpectedly (exit code: {exit_code})"
+            )
+            instance.pid = None
+            instance.started_at = None
+            config_manager.update_instance(instance_id, instance)
+
+            self._purge_instance_resources(instance_id, call_runner_on_stop=True)
+            self._push_instances_update()
+
     def _read_logs(
         self,
         instance_id: str,
@@ -125,10 +182,10 @@ class ProcessManager:
         runner: BackendRunner,
     ):
         """Read logs from process and store in buffer."""
-        try:
-            if not process.stdout:
-                return
+        if not process.stdout:
+            return
 
+        try:
             with open(log_file, "a") as f:
                 for line in iter(process.stdout.readline, b""):
                     if not line:
@@ -172,6 +229,9 @@ class ProcessManager:
                         pass
         except Exception as e:
             print(f"Error reading logs for {instance_id}: {e}")
+        finally:
+            # stdout closed or reader error: child likely exited — reconcile state
+            self._handle_child_exit(instance_id, process)
 
     def ensure_flush_loop(self, loop: asyncio.AbstractEventLoop):
         """Start the batched emission flush loop on the given event loop.
@@ -217,6 +277,21 @@ class ProcessManager:
 
         if latest_states:
             await broadcast_instance_state_batch(list(latest_states.values()))
+
+    async def watchdog_loop(self):
+        """Periodically poll child processes; mark FAILED if any exited unexpectedly."""
+        while True:
+            try:
+                await asyncio.sleep(WATCHDOG_INTERVAL_S)
+                for instance_id, process in list(self.processes.items()):
+                    if process.poll() is not None:
+                        await asyncio.to_thread(
+                            self._handle_child_exit, instance_id, process
+                        )
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
     def _push_log_event(self, instance_id: str, seq: int, line: str, timestamp: str):
         """Queue a log event for batched emission (thread-safe, non-blocking)."""
@@ -312,9 +387,20 @@ class ProcessManager:
         if not instance:
             return False
 
-        # Check if already running
+        # Check if already running (verify subprocess is still alive)
         if instance.status == InstanceStatus.RUNNING:
-            return True
+            proc = self.processes.get(instance_id)
+            if proc and proc.poll() is None:
+                return True
+            # Stale RUNNING: process missing or dead — reset and continue start
+            if proc is not None:
+                self.processes.pop(instance_id, None)
+            self._purge_instance_resources(instance_id, call_runner_on_stop=True)
+            instance.status = InstanceStatus.STOPPED
+            instance.pid = None
+            instance.started_at = None
+            instance.error_message = None
+            config_manager.update_instance(instance_id, instance)
 
         # Always find an available port on start
         instance.port = self._get_available_port()
@@ -477,24 +563,9 @@ class ProcessManager:
                     process.kill()
                     await asyncio.to_thread(process.wait)
 
-                del self.processes[instance_id]
+                self.processes.pop(instance_id, None)
 
-            # Notify runner that process stopped
-            runner = self.instance_runners.get(instance_id)
-            if runner:
-                context = self.instance_contexts.get(instance_id, {})
-                runner.on_process_stopped(instance_id, context)
-
-            # Cleanup
-            if instance_id in self.instance_runners:
-                del self.instance_runners[instance_id]
-            if instance_id in self.instance_contexts:
-                del self.instance_contexts[instance_id]
-            self.log_buffers.pop(instance_id, None)
-            self.log_sequences.pop(instance_id, None)
-            self.log_threads.pop(instance_id, None)
-            self.state_buffers.pop(instance_id, None)
-            self.state_sequences.pop(instance_id, None)
+            self._purge_instance_resources(instance_id, call_runner_on_stop=True)
 
             instance.status = InstanceStatus.STOPPED
             instance.pid = None
