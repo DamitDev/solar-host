@@ -434,11 +434,18 @@ def _patch_fp8_quantizer_for_mps() -> None:
             target = getattr(
                 conv, "_original_target_patterns", conv.target_patterns
             )
-            scale_target = (
-                target + "_scale_inv"
-                if not target.endswith(".weight")
-                else target[: -len(".weight")] + ".weight_scale_inv"
-            )
+
+            def _scale_target(t: str) -> str:
+                if t.endswith(".weight"):
+                    return t[: -len(".weight")] + ".weight_scale_inv"
+                return t + "_scale_inv"
+
+            if isinstance(target, (list, tuple)):
+                scale_target: Union[str, List[str]] = [
+                    _scale_target(t) for t in target
+                ]
+            else:
+                scale_target = _scale_target(target)
             scale_converters.append(
                 WeightConverter(
                     source_patterns=scale_sources,
