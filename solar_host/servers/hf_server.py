@@ -580,16 +580,42 @@ def _patch_fp8_quantizer_for_mps() -> None:
         # the same merge/concat for the matching scale tensors and writes
         # them to ``<original_target>_scale_inv`` (matching the names
         # registered by FP8Experts in modeling_deepseek_v4.py).
+        #
+        # We ALSO need to anchor the original ``.weight`` source patterns
+        # with ``$`` so they don't accidentally regex-match the renamed
+        # ``.weight_scale_inv`` keys. Without this anchoring, the unanchored
+        # ``experts.*.w1.weight`` regex matches both ``experts.0.w1.weight``
+        # and ``experts.0.w1.weight_scale_inv``; ``rename_source_key`` then
+        # routes the e8m0 scale tensor through the weight-side
+        # ``[MergeModulelist, Concatenate]`` chain which is undefined for
+        # sub-byte FP8 dtypes -- the very error this whole patch fights.
         scale_converters: list = []
+        rebuilt_weight_conversions: list = []
         for conv in weight_conversions:
             if not isinstance(conv, WeightConverter):
+                rebuilt_weight_conversions.append(conv)
                 continue
             sources = list(conv.source_patterns)
             weight_sources = [p for p in sources if p.endswith(".weight")]
             if not weight_sources:
+                rebuilt_weight_conversions.append(conv)
                 continue
+
+            # Anchor weight patterns so they only catch ``.weight`` exactly.
+            anchored_sources = [
+                (p + "$") if p.endswith(".weight") else p for p in sources
+            ]
+            anchored_weight_conv = WeightConverter(
+                source_patterns=anchored_sources,
+                target_patterns=getattr(
+                    conv, "_original_target_patterns", conv.target_patterns
+                ),
+                operations=list(conv.operations),
+            )
+            rebuilt_weight_conversions.append(anchored_weight_conv)
+
             scale_sources = [
-                p[: -len(".weight")] + ".weight_scale_inv"
+                p[: -len(".weight")] + ".weight_scale_inv$"
                 for p in weight_sources
             ]
             target = getattr(
@@ -636,11 +662,11 @@ def _patch_fp8_quantizer_for_mps() -> None:
         # Order:
         #   1. ``.scale`` -> ``.weight_scale_inv`` rename runs first so the
         #      scale-stacking converters below see the canonical name.
-        #   2. Original conversions (weight stacking + structural prefix
-        #      renames). Prefix renames are suffix-agnostic so they also
-        #      apply to the renamed ``.weight_scale_inv`` keys.
-        #   3. Scale-stacking converters mirroring step 2.
-        return [scale_rename] + list(weight_conversions) + scale_converters
+        #   2. Anchored weight converters (originals with ``$`` appended on
+        #      ``.weight`` sources so they no longer match scale_inv keys).
+        #   3. Scale-stacking converters mirroring step 2 for the per-block
+        #      scales, with our FP8 -> fp32 upcast op baked in.
+        return [scale_rename] + rebuilt_weight_conversions + scale_converters
 
     quantizer_cls.update_weight_conversions = _patched_update  # type: ignore[assignment]
     quantizer_cls._solar_host_original_update_weight_conversions = _orig_update  # type: ignore[attr-defined]
