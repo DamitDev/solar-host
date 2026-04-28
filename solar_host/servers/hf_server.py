@@ -372,6 +372,98 @@ def _patch_fp8_quantizer_for_mps() -> None:
         "weights resident on MPS (no bf16 dequant)."
     )
 
+    # ----- Phase 2: install a no-dequant scale-conversion path -----
+    # Upstream's ``update_weight_conversions`` only injects the
+    # ``.scale`` -> ``.weight_scale_inv`` rename and the parallel
+    # scale-stacking converters when ``dequantize=True``. With
+    # ``dequantize=False`` (our MPS path) the rename never runs, so
+    # checkpoint scales fall on the floor and the model's
+    # ``*.weight_scale_inv`` / ``*_scale_inv`` parameters get re-initialized
+    # to random values -- producing garbage at inference time.
+    #
+    # Mirror the upstream logic minus the ``Fp8Dequantize`` op so scale
+    # tensors land in the correct buckets (including per-expert stacking
+    # via the existing ``MergeModulelist`` / ``Concatenate`` ops).
+    _orig_update = getattr(quantizer_cls, "update_weight_conversions", None)
+    if _orig_update is None:
+        logger.warning(
+            "FP8 quantizer has no update_weight_conversions; cannot install "
+            "MPS scale-conversion patch."
+        )
+        return
+
+    def _patched_update(self, weight_conversions):
+        from transformers.core_model_loading import (
+            WeightConverter,
+            WeightRenaming,
+        )
+
+        # Defer to upstream when we don't own the situation: not pre-quantized
+        # (nothing to convert), or dequantize is on (full upstream pipeline).
+        if not getattr(self, "pre_quantized", False) or getattr(
+            self.quantization_config, "dequantize", False
+        ):
+            return _orig_update(self, weight_conversions)
+
+        # Generic ``foo.scale`` -> ``foo.weight_scale_inv`` rename.
+        # The upstream ``conversion_mapping`` for deepseek_v4 leaves these
+        # as-is and relies on this rename living in the FP8 quantizer.
+        scale_rename = WeightRenaming(
+            source_patterns=r"^(.+)\.scale$",
+            target_patterns=r"\1.weight_scale_inv",
+        )
+
+        # For every WeightConverter that fuses ``.weight`` sources into a
+        # stacked target (e.g. per-expert ``experts.*.w1.weight`` ->
+        # ``experts.gate_up_proj``), build a parallel converter that does
+        # the same merge/concat for the matching scale tensors and writes
+        # them to ``<original_target>_scale_inv`` (matching the names
+        # registered by FP8Experts in modeling_deepseek_v4.py).
+        scale_converters: list = []
+        for conv in weight_conversions:
+            if not isinstance(conv, WeightConverter):
+                continue
+            sources = list(conv.source_patterns)
+            weight_sources = [p for p in sources if p.endswith(".weight")]
+            if not weight_sources:
+                continue
+            scale_sources = [
+                p[: -len(".weight")] + ".weight_scale_inv"
+                for p in weight_sources
+            ]
+            target = getattr(
+                conv, "_original_target_patterns", conv.target_patterns
+            )
+            scale_target = (
+                target + "_scale_inv"
+                if not target.endswith(".weight")
+                else target[: -len(".weight")] + ".weight_scale_inv"
+            )
+            scale_converters.append(
+                WeightConverter(
+                    source_patterns=scale_sources,
+                    target_patterns=scale_target,
+                    operations=list(conv.operations),
+                )
+            )
+
+        # Order:
+        #   1. ``.scale`` -> ``.weight_scale_inv`` rename runs first so the
+        #      scale-stacking converters below see the canonical name.
+        #   2. Original conversions (weight stacking + structural prefix
+        #      renames). Prefix renames are suffix-agnostic so they also
+        #      apply to the renamed ``.weight_scale_inv`` keys.
+        #   3. Scale-stacking converters mirroring step 2.
+        return [scale_rename] + list(weight_conversions) + scale_converters
+
+    quantizer_cls.update_weight_conversions = _patched_update  # type: ignore[assignment]
+    quantizer_cls._solar_host_original_update_weight_conversions = _orig_update  # type: ignore[attr-defined]
+    logger.info(
+        f"Patched {quantizer_cls.__name__}.update_weight_conversions to "
+        "rename .scale -> .weight_scale_inv and stack per-expert scales on "
+        "MPS (no dequant)."
+    )
+
 
 def _disable_caching_allocator_warmup_for_mps() -> None:
     """Replace ``transformers.modeling_utils.caching_allocator_warmup`` with a
