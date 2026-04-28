@@ -43,6 +43,11 @@ huggingface = [
     # See: https://github.com/huggingface/transformers/pull/45643
     "transformers @ git+https://github.com/huggingface/transformers.git@refs/pull/45643/head",
     "accelerate>=1.0.0",
+    # macOS only: register float8_e4m3fn / float8_e5m2 / float4_e2m1fn_x2 plus
+    # torch._scaled_mm on MPS via Metal shaders, so transformers' FP8 quantizer
+    # can keep DeepSeek-V4 weights in FP8 instead of dequantizing to bf16.
+    # https://pypi.org/project/fp4-fp8-for-torch-mps/
+    "fp4-fp8-for-torch-mps>=1.0.0; sys_platform == 'darwin'",
 ]
 all = ["solar-host[nvidia,huggingface]"]
 dev = ["pytest>=9.0"]

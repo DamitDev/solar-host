@@ -245,6 +245,132 @@ class EmbeddingResponse(BaseModel):
 
 
 _caching_allocator_warmup_patched: bool = False
+_fp8_quantizer_patched: bool = False
+_mps_fp8_dtypes_loaded: Optional[bool] = None
+
+
+def _ensure_mps_fp8_dtypes() -> bool:
+    """Import ``fp4_fp8_for_torch_mps`` on macOS so torch's MPS backend gains
+    ``float8_e4m3fn`` / ``float8_e5m2`` / ``float4_e2m1fn_x2`` support plus a
+    Metal-shader ``torch._scaled_mm``.
+
+    The package self-registers on import, so we only need to import it (it's
+    optional and only listed as a dep on ``sys_platform == 'darwin'``).
+    Returns True on success, False if the package isn't installed.
+    """
+    global _mps_fp8_dtypes_loaded
+    if _mps_fp8_dtypes_loaded is not None:
+        return _mps_fp8_dtypes_loaded
+
+    if not (
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    ):
+        _mps_fp8_dtypes_loaded = False
+        return False
+
+    try:
+        import fp4_fp8_for_torch_mps  # noqa: F401
+    except Exception as exc:  # pragma: no cover - optional dep
+        logger.warning(
+            "fp4-fp8-for-torch-mps is not installed; transformers' FP8 "
+            "quantizer will dequantize FP8 weights to bf16 on MPS, which "
+            f"may exceed unified memory. ({exc})"
+        )
+        _mps_fp8_dtypes_loaded = False
+        return False
+
+    logger.info(
+        "Loaded fp4-fp8-for-torch-mps: float8_e4m3fn / float8_e5m2 / "
+        "float4_e2m1fn_x2 are now available on MPS via Metal shaders."
+    )
+    _mps_fp8_dtypes_loaded = True
+    return True
+
+
+def _patch_fp8_quantizer_for_mps() -> None:
+    """Stop transformers' FP8 quantizer from forcing bf16 dequant on MPS.
+
+    Upstream's ``FineGrainedFP8HfQuantizer.validate_environment`` flips
+    ``quantization_config.dequantize = True`` whenever neither CUDA nor XPU is
+    available, which is the wrong call when ``fp4-fp8-for-torch-mps`` is
+    installed (it provides FP8 dtypes + ``torch._scaled_mm`` on MPS via
+    Metal). We replace ``validate_environment`` with a wrapper that returns
+    early on MPS so dequant stays disabled.
+
+    Idempotent. No-op when MPS isn't available or transformers' module path
+    has shifted (we log and skip rather than break the load).
+    """
+    global _fp8_quantizer_patched
+    if _fp8_quantizer_patched:
+        return
+    if not (
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    ):
+        return
+    if not _ensure_mps_fp8_dtypes():
+        return
+
+    quantizer_cls = None
+    try:
+        from transformers.quantizers.quantizer_finegrained_fp8 import (
+            FineGrainedFP8HfQuantizer as _Cls,
+        )
+
+        quantizer_cls = _Cls
+    except Exception:
+        try:
+            from transformers.quantizers.quantizer_fp8 import (  # type: ignore[import-not-found]
+                FP8HfQuantizer as _Cls,
+            )
+
+            quantizer_cls = _Cls
+        except Exception as exc:
+            logger.warning(
+                "Could not locate transformers FP8 quantizer to patch for MPS "
+                f"({exc}); FP8 weights will be dequantized to bf16."
+            )
+            return
+
+    _orig = quantizer_cls.validate_environment
+
+    def _patched(self, *args, **kwargs):
+        # Run the upstream accelerate-availability check, then short-circuit
+        # before the cuda/xpu gate flips ``dequantize=True``.
+        try:
+            from transformers.utils import is_accelerate_available
+        except Exception:
+            is_accelerate_available = lambda: True  # noqa: E731
+        if not is_accelerate_available():
+            raise ImportError(
+                "Loading an FP8 quantized model requires accelerate "
+                "(`pip install accelerate`)"
+            )
+        if getattr(self.quantization_config, "dequantize", False):
+            return
+        # Reject explicit cpu/disk shards in the device_map for non-pre-quantized
+        # loads, mirroring upstream's invariant.
+        device_map = kwargs.get("device_map")
+        if (
+            isinstance(device_map, dict)
+            and not getattr(self, "pre_quantized", False)
+            and len(device_map) > 1
+            and ("cpu" in device_map.values() or "disk" in device_map.values())
+        ):
+            raise ValueError(
+                "FP8 on-the-fly quantization does not support cpu/disk shards "
+                "in device_map; use a pre-quantized checkpoint or a single "
+                "device target."
+            )
+        return  # MPS path: leave dequantize=False, weights stay FP8.
+
+    quantizer_cls.validate_environment = _patched  # type: ignore[assignment]
+    _fp8_quantizer_patched = True
+    # Stash the original for diagnostics / future unpatch if ever needed.
+    quantizer_cls._solar_host_original_validate_environment = _orig  # type: ignore[attr-defined]
+    logger.info(
+        f"Patched {quantizer_cls.__name__}.validate_environment to keep FP8 "
+        "weights resident on MPS (no bf16 dequant)."
+    )
 
 
 def _disable_caching_allocator_warmup_for_mps() -> None:
@@ -475,6 +601,27 @@ class ServerState:
             # loading can succeed.
             if self.device == "mps":
                 _disable_caching_allocator_warmup_for_mps()
+                # Allow transformers' FP8 quantizer to keep weights in FP8 on
+                # MPS (requires fp4-fp8-for-torch-mps). Without this it forces
+                # bf16 dequant and inflates V4-Flash to ~570 GB resident.
+                _patch_fp8_quantizer_for_mps()
+
+            # accelerate's ``device_map="auto"`` may decide some shards must
+            # spill to disk if the unified-memory budget is tight; supply an
+            # ``offload_folder`` so it can do that instead of bailing with
+            # "Please provide an offload_folder".
+            if device_map == "auto" or isinstance(device_map, dict):
+                import os
+                import tempfile
+
+                offload_folder = os.path.join(
+                    tempfile.gettempdir(),
+                    f"solar-host-offload-{self.alias.replace('/', '_').replace(':', '_') or 'model'}",
+                )
+                os.makedirs(offload_folder, exist_ok=True)
+                model_kwargs.setdefault("offload_folder", offload_folder)
+                model_kwargs.setdefault("offload_state_dict", True)
+                logger.info(f"Using offload folder: {offload_folder}")
 
             model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
 
