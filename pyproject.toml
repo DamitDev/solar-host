@@ -37,7 +37,11 @@ dependencies = [
 nvidia = ["nvidia-ml-py>=13.580.82"]
 huggingface = [
     "torch>=2.5.0",
-    "transformers>=4.57.1",
+    # DeepSeek-V4 (`model_type: deepseek_v4`) support has not yet shipped in a
+    # stable transformers release; pin to the open PR that adds the
+    # `DeepseekV4ForCausalLM` modeling code.
+    # See: https://github.com/huggingface/transformers/pull/45643
+    "transformers @ git+https://github.com/huggingface/transformers.git@refs/pull/45643/head",
     "accelerate>=1.0.0",
 ]
 all = ["solar-host[nvidia,huggingface]"]
@@ -50,6 +54,12 @@ solar-host = "solar_host.main:run"
 Homepage = "https://github.com/DamitDev/solar-host"
 Repository = "https://github.com/DamitDev/solar-host"
 Issues = "https://github.com/DamitDev/solar-host/issues"
+
+[tool.hatch.metadata]
+# Required for direct-URL dependencies (e.g. `transformers @ git+https://...`
+# pinned to an open PR for DeepSeek-V4 support). Hatchling rejects PEP 508
+# direct references by default.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["solar_host"]
