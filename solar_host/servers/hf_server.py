@@ -392,11 +392,81 @@ def _patch_fp8_quantizer_for_mps() -> None:
         )
         return
 
+    # Build the FP8 sub-byte dtype set + upcast helper once per process.
+    _fp8_subbyte_dtypes = tuple(
+        d
+        for d in (
+            getattr(torch, "float8_e4m3fn", None),
+            getattr(torch, "float8_e5m2", None),
+            getattr(torch, "float8_e8m0fnu", None),
+            getattr(torch, "float4_e2m1fn_x2", None),
+        )
+        if d is not None
+    )
+
+    def _upcast_fp8_to_fp32(t: torch.Tensor) -> torch.Tensor:
+        if t.dtype not in _fp8_subbyte_dtypes:
+            return t
+        try:
+            return t.to(torch.float32)
+        except Exception:
+            if (
+                hasattr(torch, "float8_e8m0fnu")
+                and t.dtype == torch.float8_e8m0fnu
+            ):
+                # Manual reinterpret: E8M0 = unbiased 8-bit exponent (no
+                # mantissa, no sign). Value = 2^(byte - 127); byte == 0 → 0,
+                # byte == 255 → NaN per the OCP spec.
+                raw = t.view(torch.uint8).to(torch.int32)
+                zero_mask = raw == 0
+                nan_mask = raw == 255
+                value = torch.pow(
+                    torch.tensor(2.0, dtype=torch.float32),
+                    (raw - 127).to(torch.float32),
+                )
+                value = torch.where(
+                    zero_mask, torch.zeros_like(value), value
+                )
+                value = torch.where(
+                    nan_mask, torch.full_like(value, float("nan")), value
+                )
+                return value.view(t.shape)
+            raise
+
+    def _upcast_input_dict(input_dict):
+        out = {}
+        for k, v in input_dict.items():
+            if isinstance(v, list):
+                out[k] = [_upcast_fp8_to_fp32(t) for t in v]
+            else:
+                out[k] = _upcast_fp8_to_fp32(v)
+        return out
+
     def _patched_update(self, weight_conversions):
         from transformers.core_model_loading import (
+            ConversionOps,
             WeightConverter,
             WeightRenaming,
         )
+
+        class _UpcastFP8SubByteToFP32(ConversionOps):
+            """Pre-op that upcasts FP8 sub-byte tensors to float32.
+
+            Required for DeepSeek-V4 expert scales which arrive as
+            ``float8_e8m0fnu`` -- a dtype that ``torch.cat`` / ``torch.stack``
+            don't natively support, and which the downstream model parameter
+            (``*_scale_inv``) expects in float32 anyway.
+            """
+
+            @torch.no_grad
+            def convert(
+                self, input_dict, source_patterns, target_patterns, **kwargs
+            ):
+                return _upcast_input_dict(input_dict)
+
+            @property
+            def reverse_op(self):
+                return self  # no-op on the save side
 
         # Defer to upstream when we don't own the situation: not pre-quantized
         # (nothing to convert), or dequantize is on (full upstream pipeline).
@@ -446,11 +516,15 @@ def _patch_fp8_quantizer_for_mps() -> None:
                 ]
             else:
                 scale_target = _scale_target(target)
+            # Prepend the FP8-subbyte upcast so the downstream merge/concat
+            # ops never see e8m0fnu / e2m1fn_x2 tensors (torch.cat is
+            # undefined on those). Target params are float32 anyway.
             scale_converters.append(
                 WeightConverter(
                     source_patterns=scale_sources,
                     target_patterns=scale_target,
-                    operations=list(conv.operations),
+                    operations=[_UpcastFP8SubByteToFP32()]
+                    + list(conv.operations),
                 )
             )
 
