@@ -420,10 +420,11 @@ def _patch_fp8_quantizer_for_mps() -> None:
                 raw = t.view(torch.uint8).to(torch.int32)
                 zero_mask = raw == 0
                 nan_mask = raw == 255
-                value = torch.pow(
-                    torch.tensor(2.0, dtype=torch.float32),
-                    (raw - 127).to(torch.float32),
+                exponent = (raw - 127).to(torch.float32)
+                base = torch.tensor(
+                    2.0, dtype=torch.float32, device=exponent.device
                 )
+                value = torch.pow(base, exponent)
                 value = torch.where(
                     zero_mask, torch.zeros_like(value), value
                 )
@@ -442,31 +443,121 @@ def _patch_fp8_quantizer_for_mps() -> None:
                 out[k] = _upcast_fp8_to_fp32(v)
         return out
 
+    _patch_log_state = {"first_upcast_logged": False}
+
     def _patched_update(self, weight_conversions):
         from transformers.core_model_loading import (
             ConversionOps,
+            MergeModulelist,
+            Concatenate,
             WeightConverter,
             WeightRenaming,
         )
 
-        class _UpcastFP8SubByteToFP32(ConversionOps):
-            """Pre-op that upcasts FP8 sub-byte tensors to float32.
+        class _UpcastMergeConcat(ConversionOps):
+            """Single op that upcasts FP8 sub-byte scale tensors to fp32, then
+            merges per-source via ``torch.stack`` and concatenates the
+            resulting tensors along ``concat_dim``.
 
-            Required for DeepSeek-V4 expert scales which arrive as
-            ``float8_e8m0fnu`` -- a dtype that ``torch.cat`` / ``torch.stack``
-            don't natively support, and which the downstream model parameter
-            (``*_scale_inv``) expects in float32 anyway.
+            This mirrors ``[MergeModulelist(stack_dim), Concatenate(concat_dim)]``
+            but performs the upcast first so MPS-resident
+            ``float8_e8m0fnu`` / ``float4_e2m1fn_x2`` tensors don't trip
+            ``torch.cat`` / ``torch.stack`` (which lack support for those
+            sub-byte dtypes on MPS in some torch builds).
             """
+
+            def __init__(self, stack_dim: int = 0, concat_dim: int = 1):
+                self.stack_dim = stack_dim
+                self.concat_dim = concat_dim
 
             @torch.no_grad
             def convert(
                 self, input_dict, source_patterns, target_patterns, **kwargs
             ):
-                return _upcast_input_dict(input_dict)
+                # 1) upcast every tensor whose dtype is sub-byte FP8.
+                upcast = _upcast_input_dict(input_dict)
+                if not _patch_log_state["first_upcast_logged"]:
+                    _patch_log_state["first_upcast_logged"] = True
+                    sample_dtype = None
+                    for v in upcast.values():
+                        sample_dtype = (v[0] if isinstance(v, list) else v).dtype
+                        break
+                    logger.info(
+                        f"FP8 scale upcast active: first batch dtype after "
+                        f"upcast = {sample_dtype}"
+                    )
+
+                # 2) stack per source pattern (each value should be a list).
+                stacked = {}
+                for src, tensors in upcast.items():
+                    if isinstance(tensors, list):
+                        stacked[src] = torch.stack(tensors, dim=self.stack_dim)
+                    else:
+                        stacked[src] = tensors
+
+                # 3) determine target pattern.
+                if isinstance(target_patterns, list):
+                    if len(target_patterns) != 1:
+                        raise ValueError(
+                            "_UpcastMergeConcat expects exactly one target "
+                            f"pattern, got {target_patterns!r}"
+                        )
+                    target = target_patterns[0]
+                else:
+                    target = target_patterns
+
+                # 4) concat in the requested order of source_patterns.
+                ordered: list = []
+                src_iter = (
+                    source_patterns
+                    if isinstance(source_patterns, list)
+                    else [source_patterns]
+                )
+                for src in src_iter:
+                    if src in stacked:
+                        ordered.append(stacked[src])
+                if len(ordered) == 1:
+                    return {target: ordered[0]}
+                return {target: torch.cat(ordered, dim=self.concat_dim)}
 
             @property
             def reverse_op(self):
-                return self  # no-op on the save side
+                return self  # not needed for load-only
+
+        class _UpcastMerge(ConversionOps):
+            """Single op for the ``[MergeModulelist(dim=0)]`` (down_proj)
+            scale converter: upcast then stack across experts.
+
+            Although down_proj scales currently load fine via the chained
+            approach (only one source, no concat needed), using this
+            self-contained op keeps both scale paths consistent and avoids
+            relying on a separate upcast op chaining correctly through
+            MergeModulelist.
+            """
+
+            def __init__(self, stack_dim: int = 0):
+                self.stack_dim = stack_dim
+
+            @torch.no_grad
+            def convert(
+                self, input_dict, source_patterns, target_patterns, **kwargs
+            ):
+                upcast = _upcast_input_dict(input_dict)
+                target = (
+                    target_patterns[0]
+                    if isinstance(target_patterns, list)
+                    else target_patterns
+                )
+                # input_dict has at most one source for this op.
+                for v in upcast.values():
+                    if isinstance(v, list):
+                        return {target: torch.stack(v, dim=self.stack_dim)}
+                    return {target: v}
+                return {}
+
+            @property
+            def reverse_op(self):
+                return self
 
         # Defer to upstream when we don't own the situation: not pre-quantized
         # (nothing to convert), or dequantize is on (full upstream pipeline).
@@ -516,15 +607,29 @@ def _patch_fp8_quantizer_for_mps() -> None:
                 ]
             else:
                 scale_target = _scale_target(target)
-            # Prepend the FP8-subbyte upcast so the downstream merge/concat
-            # ops never see e8m0fnu / e2m1fn_x2 tensors (torch.cat is
-            # undefined on those). Target params are float32 anyway.
+            # Pick a single self-contained op based on the original chain so
+            # we never let MPS-resident e8m0fnu tensors flow through stock
+            # MergeModulelist/Concatenate (which call into ATen kernels that
+            # are undefined for those sub-byte FP8 dtypes on some torch
+            # builds). Target params are float32, so we can upcast freely.
+            stack_dim = 0
+            concat_dim: int | None = None
+            for op in conv.operations:
+                if isinstance(op, MergeModulelist):
+                    stack_dim = op.dim
+                elif isinstance(op, Concatenate):
+                    concat_dim = op.dim
+            if concat_dim is not None:
+                scale_op: ConversionOps = _UpcastMergeConcat(
+                    stack_dim=stack_dim, concat_dim=concat_dim
+                )
+            else:
+                scale_op = _UpcastMerge(stack_dim=stack_dim)
             scale_converters.append(
                 WeightConverter(
                     source_patterns=scale_sources,
                     target_patterns=scale_target,
-                    operations=[_UpcastFP8SubByteToFP32()]
-                    + list(conv.operations),
+                    operations=[scale_op],
                 )
             )
 
