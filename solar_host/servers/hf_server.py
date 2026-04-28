@@ -240,6 +240,69 @@ class EmbeddingResponse(BaseModel):
 
 
 # ============================================================================
+# transformers patches
+# ============================================================================
+
+
+_caching_allocator_warmup_patched: bool = False
+
+
+def _disable_caching_allocator_warmup_for_mps() -> None:
+    """Replace ``transformers.modeling_utils.caching_allocator_warmup`` with a
+    pass-through that skips MPS devices.
+
+    The upstream warmup pre-allocates one giant tensor per device to prime
+    CUDA's caching allocator. On MPS (Apple Silicon) that single allocation
+    bumps against ``MTLDevice.maxBufferLength`` for any large model -- e.g.
+    DeepSeek-V4-Flash dequantized to bf16 needs a single ~405 GiB buffer,
+    which Metal rejects even on a 512 GB Mac Studio. The warmup provides no
+    benefit on MPS, so neutralizing it for MPS-bound shards is safe.
+
+    Idempotent: only patches once per process.
+    """
+    global _caching_allocator_warmup_patched
+    if _caching_allocator_warmup_patched:
+        return
+
+    try:
+        from transformers import modeling_utils as _hf_mu
+    except Exception as exc:  # pragma: no cover - transformers is required
+        logger.warning(f"Could not patch caching_allocator_warmup: {exc}")
+        return
+
+    _orig = getattr(_hf_mu, "caching_allocator_warmup", None)
+    if _orig is None:
+        return
+
+    def _patched(model, expanded_device_map, hf_quantizer, *args, **kwargs):
+        # Drop MPS entries before calling through; if every entry is MPS,
+        # skip the warmup entirely.
+        try:
+            non_mps_map = {
+                k: v
+                for k, v in dict(expanded_device_map).items()
+                if str(v) != "mps"
+            }
+        except Exception:
+            non_mps_map = expanded_device_map
+
+        if not non_mps_map:
+            logger.info(
+                "Skipping transformers caching_allocator_warmup: all shards "
+                "are on MPS (Metal per-buffer limits make the warmup unsafe)."
+            )
+            return None
+        return _orig(model, non_mps_map, hf_quantizer, *args, **kwargs)
+
+    _hf_mu.caching_allocator_warmup = _patched
+    _caching_allocator_warmup_patched = True
+    logger.info(
+        "Patched transformers.modeling_utils.caching_allocator_warmup to "
+        "skip MPS-bound shards."
+    )
+
+
+# ============================================================================
 # Global State
 # ============================================================================
 
@@ -357,7 +420,13 @@ class ServerState:
         logger.info(f"Model type: {model_type}")
         logger.info(f"Architecture: {arch_model_type or '<unknown>'}")
         logger.info(f"Device: {self.device}")
-        logger.info(f"Dtype: {dtype} -> {model_dtype}")
+        if self.is_deepseek_v4:
+            # The actual ``dtype`` arg passed to ``from_pretrained`` is the literal
+            # string ``"auto"`` (not the resolved torch dtype) so transformers can
+            # honor the model's quantization_config block.
+            logger.info("Dtype: auto (forced by deepseek_v4 quantization_config)")
+        else:
+            logger.info(f"Dtype: {dtype} -> {model_dtype}")
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -396,6 +465,16 @@ class ServerState:
             # CUDA-only, so MPS hosts (e.g. Mac Studio M3 Ultra) silently skip.
             if use_flash_attention and self.device == "cuda":
                 model_kwargs["attn_implementation"] = "flash_attention_2"
+
+            # transformers' ``caching_allocator_warmup`` is a CUDA optimization
+            # but is invoked on every device. On MPS it tries to allocate a
+            # single per-device buffer (e.g. ~405 GiB for V4-Flash dequantized
+            # to bf16), which Metal rejects regardless of unified-memory size
+            # because it exceeds ``MTLDevice.maxBufferLength``. Neutralize it
+            # for MPS loads so the per-shard allocations during state-dict
+            # loading can succeed.
+            if self.device == "mps":
+                _disable_caching_allocator_warmup_for_mps()
 
             model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
 
