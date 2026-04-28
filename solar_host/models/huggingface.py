@@ -130,3 +130,46 @@ class HuggingFaceEmbeddingConfig(BaseModel):
     port: Optional[int] = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )
+
+
+class HuggingFaceVisionConfig(BaseModel):
+    """Configuration for a HuggingFace vision/multimodal (image-text-to-text) instance.
+
+    Loaded via AutoModelForImageTextToText (or AutoModelForVision2Seq fallback)
+    plus AutoProcessor for image preprocessing.
+
+    Note: api_key is NOT a config parameter - instances always use the host's API key.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_api_key(cls, data: Any) -> Any:
+        return _strip_api_key(data)
+
+    backend_type: Literal["huggingface_vision"] = Field(
+        default="huggingface_vision", description="Backend type identifier"
+    )
+    model_id: str = Field(
+        ...,
+        description="HuggingFace model ID or local path (e.g., 'Qwen/Qwen2.5-VL-7B-Instruct')",
+    )
+    alias: str = Field(..., description="Model alias (e.g., qwen-vl:7b)")
+    device: str = Field(
+        default="auto", description="Device to run on: auto, cuda, mps (Mac), cpu"
+    )
+    dtype: str = Field(
+        default="auto", description="Data type: auto, float16, bfloat16, float32"
+    )
+    max_length: int = Field(default=4096, description="Maximum sequence length")
+    trust_remote_code: bool = Field(
+        default=False, description="Whether to trust remote code from HuggingFace"
+    )
+    use_flash_attention: bool = Field(
+        default=True, description="Use Flash Attention 2 if available"
+    )
+    host: str = Field(default="0.0.0.0", description="Host to bind to")
+    port: Optional[int] = Field(
+        default=None, description="Port (auto-assigned if not specified)"
+    )

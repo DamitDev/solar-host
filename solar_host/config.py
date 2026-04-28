@@ -14,6 +14,7 @@ from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,
+    HuggingFaceVisionConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ def parse_instance_config(config_data: Dict[str, Any]) -> Any:
         return HuggingFaceClassificationConfig(**config_data)
     elif backend_type == "huggingface_embedding":
         return HuggingFaceEmbeddingConfig(**config_data)
+    elif backend_type == "huggingface_vision":
+        return HuggingFaceVisionConfig(**config_data)
     else:
         raise ValueError(f"Unknown backend_type: {backend_type!r}")
 

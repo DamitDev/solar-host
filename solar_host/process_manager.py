@@ -53,9 +53,11 @@ def get_runner_for_config(config) -> BackendRunner:
         BackendType.HUGGINGFACE_CAUSAL,
         BackendType.HUGGINGFACE_CLASSIFICATION,
         BackendType.HUGGINGFACE_EMBEDDING,
+        BackendType.HUGGINGFACE_VISION,
         "huggingface_causal",
         "huggingface_classification",
         "huggingface_embedding",
+        "huggingface_vision",
     ):
         return HuggingFaceRunner()
     else:

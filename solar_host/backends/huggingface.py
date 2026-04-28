@@ -63,6 +63,11 @@ class HuggingFaceRunner(BackendRunner):
             or backend_type == "huggingface_embedding"
         ):
             model_type = "embedding"
+        elif (
+            backend_type == BackendType.HUGGINGFACE_VISION
+            or backend_type == "huggingface_vision"
+        ):
+            model_type = "vision"
         else:
             raise RuntimeError(f"Unknown HuggingFace backend_type: {backend_type!r}")
 
@@ -149,6 +154,15 @@ class HuggingFaceRunner(BackendRunner):
         ):
             return [
                 "/v1/embeddings",
+                "/v1/models",
+                "/health",
+            ]
+        elif (
+            backend_type == BackendType.HUGGINGFACE_VISION
+            or backend_type == "huggingface_vision"
+        ):
+            return [
+                "/v1/chat/completions",
                 "/v1/models",
                 "/health",
             ]

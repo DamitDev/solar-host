@@ -13,6 +13,7 @@ class BackendType(str, Enum):
     HUGGINGFACE_CAUSAL = "huggingface_causal"
     HUGGINGFACE_CLASSIFICATION = "huggingface_classification"
     HUGGINGFACE_EMBEDDING = "huggingface_embedding"
+    HUGGINGFACE_VISION = "huggingface_vision"
 
 
 class InstanceStatus(str, Enum):

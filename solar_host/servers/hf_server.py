@@ -20,12 +20,15 @@ Usage:
 """
 
 import argparse
+import base64
+import io
 import time
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Union, TYPE_CHECKING
+from typing import Any, Optional, List, Dict, Union, TYPE_CHECKING
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import torch
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -41,6 +44,15 @@ if TYPE_CHECKING:
         PreTrainedTokenizer,
         PreTrainedTokenizerFast,
     )
+
+# Capabilities exposed via /v1/models, used by downstream apps
+# (e.g. Orchestrator) to differentiate text-only vs multimodal models.
+MODEL_TYPE_CAPABILITIES: Dict[str, List[str]] = {
+    "causal": ["completion"],
+    "classification": ["classification"],
+    "embedding": ["embedding"],
+    "vision": ["completion", "multimodal"],
+}
 
 # Configure logging to output structured messages for the runner to parse
 logging.basicConfig(
@@ -58,7 +70,9 @@ logger = logging.getLogger(__name__)
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    # Either a plain string (text-only) or an OpenAI-style list of content parts
+    # like [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"..."}}]
+    content: Union[str, List[Dict[str, Any]]]
     name: Optional[str] = None
 
 
@@ -193,6 +207,9 @@ class ServerState:
         self.tokenizer: Optional[
             Union["PreTrainedTokenizer", "PreTrainedTokenizerFast"]
         ] = None
+        # Multi-modal processor (used for vision/multimodal models). Wraps
+        # the tokenizer plus image preprocessor.
+        self.processor: Optional[Any] = None
         self.model_id: str = ""
         self.model_type: str = "causal"
         self.alias: str = ""
@@ -332,6 +349,34 @@ class ServerState:
             self.model = model
             logger.info(f"Normalize embeddings: {self.normalize_embeddings}")
 
+        elif model_type == "vision":
+            from transformers import AutoProcessor
+
+            try:
+                from transformers import AutoModelForImageTextToText as VisionModelCls
+            except ImportError:
+                from transformers import AutoModelForVision2Seq as VisionModelCls
+
+            processor = AutoProcessor.from_pretrained(
+                model_id,
+                trust_remote_code=trust_remote_code,
+            )
+            self.processor = processor
+
+            model_kwargs: Dict[str, object] = {
+                "dtype": model_dtype,
+                "trust_remote_code": trust_remote_code,
+                "device_map": self.device if self.device != "mps" else None,
+            }
+            if use_flash_attention and self.device == "cuda":
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+
+            model = VisionModelCls.from_pretrained(model_id, **model_kwargs)
+            if self.device == "mps":
+                target_device = torch.device(self.device)
+                model = model.to(device=target_device)  # type: ignore[call-overload]
+            self.model = model
+
         if self.model is not None:
             self.model.eval()
         logger.info(f"Model loaded successfully on {self.device}")
@@ -423,8 +468,37 @@ async def health():
 
 @app.get("/v1/models")
 async def list_models(_: bool = Depends(verify_api_key)):
-    """List available models (OpenAI compatible)."""
+    """List available models.
+
+    Returns both an Ollama-style ``models`` array and an OpenAI-style ``data``
+    array (matching llama.cpp's shape), each carrying ``capabilities`` so that
+    downstream apps (e.g. solar-control's gateway, the orchestrator) can
+    differentiate text vs multimodal models without trial-and-error.
+    """
+    capabilities = MODEL_TYPE_CAPABILITIES.get(state.model_type, ["completion"])
     return {
+        "models": [
+            {
+                "name": state.alias,
+                "model": state.alias,
+                "modified_at": "",
+                "size": "",
+                "digest": "",
+                "type": "model",
+                "description": "",
+                "tags": [""],
+                "capabilities": capabilities,
+                "parameters": "",
+                "details": {
+                    "parent_model": "",
+                    "format": "huggingface",
+                    "family": "",
+                    "families": [""],
+                    "parameter_size": "",
+                    "quantization_level": "",
+                },
+            }
+        ],
         "object": "list",
         "data": [
             {
@@ -432,22 +506,78 @@ async def list_models(_: bool = Depends(verify_api_key)):
                 "object": "model",
                 "created": state.created_at,
                 "owned_by": "huggingface",
+                "capabilities": capabilities,
             }
         ],
     }
 
 
-@app.post("/v1/chat/completions")
-async def chat_completions(
-    request: ChatCompletionRequest, _: bool = Depends(verify_api_key)
-):
-    """Chat completion endpoint (OpenAI compatible)."""
-    if state.model_type != "causal":
-        raise HTTPException(
-            status_code=400, detail="Chat completions only available for causal models"
-        )
+def _load_image_from_url(url: str):
+    """Load a PIL Image from a data URI or http(s) URL.
 
-    # Ensure model is loaded
+    Imports PIL lazily so non-vision deployments don't pay the cost.
+    """
+    from PIL import Image
+
+    if url.startswith("data:"):
+        try:
+            header, b64 = url.split(",", 1)
+        except ValueError as exc:
+            raise ValueError(f"Malformed data URI: {url[:60]}...") from exc
+        raw = base64.b64decode(b64)
+        return Image.open(io.BytesIO(raw)).convert("RGB")
+
+    parsed = urlparse(url)
+    if parsed.scheme in ("http", "https"):
+        import requests
+
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+    raise ValueError(f"Unsupported image URL scheme: {parsed.scheme!r}")
+
+
+def _normalize_messages_for_processor(
+    messages: List[ChatMessage],
+) -> tuple[List[Dict[str, Any]], List[Any]]:
+    """Convert OpenAI-style messages into processor-friendly form + image list.
+
+    Each `image_url` content part is downloaded into a PIL image and replaced
+    by ``{"type": "image"}`` (the convention most multimodal HF processors expect
+    for ``apply_chat_template``).
+    """
+    norm_messages: List[Dict[str, Any]] = []
+    images: List[Any] = []
+
+    for m in messages:
+        if isinstance(m.content, str):
+            norm_messages.append({"role": m.role, "content": m.content})
+            continue
+
+        parts: List[Dict[str, Any]] = []
+        for part in m.content:
+            ptype = part.get("type")
+            if ptype == "text":
+                parts.append({"type": "text", "text": part.get("text", "")})
+            elif ptype == "image_url":
+                image_url = part.get("image_url", {})
+                url = (
+                    image_url.get("url") if isinstance(image_url, dict) else image_url
+                )
+                if not url:
+                    raise ValueError("image_url part missing 'url'")
+                images.append(_load_image_from_url(url))
+                parts.append({"type": "image"})
+            else:
+                raise ValueError(f"Unsupported content part type: {ptype!r}")
+        norm_messages.append({"role": m.role, "content": parts})
+
+    return norm_messages, images
+
+
+async def _chat_completion_causal(request: ChatCompletionRequest) -> ChatCompletionResponse:
+    """Chat completion implementation for causal (text-only) models."""
     state.ensure_loaded()
     model = state.model
     tokenizer = state.tokenizer
@@ -456,75 +586,183 @@ async def chat_completions(
     start_time = time.time()
     logger.info(f"[REQUEST] model={state.alias} endpoint=/v1/chat/completions")
 
-    try:
-        # Build prompt from messages
-        prompt: str
-        if hasattr(tokenizer, "apply_chat_template"):
-            template_result = tokenizer.apply_chat_template(
-                [{"role": m.role, "content": m.content} for m in request.messages],
-                tokenize=False,
-                add_generation_prompt=True,
+    # Causal text-only path expects plain string content.
+    plain_messages: List[Dict[str, str]] = []
+    for m in request.messages:
+        if not isinstance(m.content, str):
+            raise HTTPException(
+                status_code=400,
+                detail="Causal model received non-text content; use a vision model",
             )
-            # apply_chat_template returns str when tokenize=False
-            prompt = str(template_result)
-        else:
-            # Fallback: simple concatenation
-            prompt = "\n".join([f"{m.role}: {m.content}" for m in request.messages])
-            prompt += "\nassistant:"
+        plain_messages.append({"role": m.role, "content": m.content})
 
-        # Tokenize
-        encoded = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=state.max_length,
+    prompt: str
+    if hasattr(tokenizer, "apply_chat_template"):
+        template_result = tokenizer.apply_chat_template(
+            plain_messages,
+            tokenize=False,
+            add_generation_prompt=True,
         )
-        inputs = encoded.to(state.device)
+        prompt = str(template_result)
+    else:
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in plain_messages])
+        prompt += "\nassistant:"
 
-        input_ids: torch.Tensor = inputs["input_ids"]  # type: ignore[assignment]
-        prompt_tokens: int = int(input_ids.shape[1])
-        max_new_tokens = request.max_tokens or (state.max_length - prompt_tokens)
+    encoded = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=state.max_length,
+    )
+    inputs = encoded.to(state.device)
 
-        # Generate
-        with torch.no_grad():
-            outputs = model.generate(  # type: ignore[operator]
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=request.temperature or 1.0,
-                top_p=request.top_p or 1.0,
-                do_sample=request.temperature != 0,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
+    input_ids: torch.Tensor = inputs["input_ids"]  # type: ignore[assignment]
+    prompt_tokens: int = int(input_ids.shape[1])
+    max_new_tokens = request.max_tokens or (state.max_length - prompt_tokens)
+
+    with torch.no_grad():
+        outputs = model.generate(  # type: ignore[operator]
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=request.temperature or 1.0,
+            top_p=request.top_p or 1.0,
+            do_sample=request.temperature != 0,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+    generated_ids = outputs[0][prompt_tokens:]
+    response_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    completion_tokens = len(generated_ids)
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"[COMPLETE] model={state.alias} tokens={completion_tokens} time_ms={elapsed_ms:.1f}"
+    )
+
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        created=int(time.time()),
+        model=state.alias,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=response_text),
+                finish_reason="stop",
             )
+        ],
+        usage={
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    )
 
-        # Decode response
-        generated_ids = outputs[0][prompt_tokens:]
+
+async def _chat_completion_vision(request: ChatCompletionRequest) -> ChatCompletionResponse:
+    """Chat completion implementation for vision/multimodal models."""
+    state.ensure_loaded()
+    model = state.model
+    processor = state.processor
+    if processor is None:
+        raise HTTPException(
+            status_code=500, detail="Vision model loaded without a processor"
+        )
+    assert model is not None  # Type narrowing
+
+    start_time = time.time()
+    logger.info(f"[REQUEST] model={state.alias} endpoint=/v1/chat/completions")
+
+    norm_messages, images = _normalize_messages_for_processor(request.messages)
+
+    template_result = processor.apply_chat_template(
+        norm_messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    prompt = str(template_result)
+
+    proc_kwargs: Dict[str, Any] = {
+        "text": prompt,
+        "return_tensors": "pt",
+    }
+    if images:
+        proc_kwargs["images"] = images
+
+    encoded = processor(**proc_kwargs)
+    inputs = encoded.to(state.device)
+
+    input_ids: torch.Tensor = inputs["input_ids"]  # type: ignore[assignment]
+    prompt_tokens: int = int(input_ids.shape[1])
+    max_new_tokens = request.max_tokens or (state.max_length - prompt_tokens)
+
+    tokenizer = getattr(processor, "tokenizer", state.tokenizer)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None) if tokenizer else None
+    eos_token_id = getattr(tokenizer, "eos_token_id", None) if tokenizer else None
+
+    with torch.no_grad():
+        outputs = model.generate(  # type: ignore[operator]
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=request.temperature or 1.0,
+            top_p=request.top_p or 1.0,
+            do_sample=request.temperature != 0,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+        )
+
+    generated_ids = outputs[0][prompt_tokens:]
+    if hasattr(processor, "decode"):
+        response_text = processor.decode(generated_ids, skip_special_tokens=True)
+    elif tokenizer is not None:
         response_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-        completion_tokens = len(generated_ids)
+    else:
+        raise HTTPException(
+            status_code=500, detail="No decoder available for vision model output"
+        )
+    completion_tokens = len(generated_ids)
 
-        elapsed_ms = (time.time() - start_time) * 1000
-        logger.info(
-            f"[COMPLETE] model={state.alias} tokens={completion_tokens} time_ms={elapsed_ms:.1f}"
+    elapsed_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"[COMPLETE] model={state.alias} tokens={completion_tokens} time_ms={elapsed_ms:.1f}"
+    )
+
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        created=int(time.time()),
+        model=state.alias,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=response_text),
+                finish_reason="stop",
+            )
+        ],
+        usage={
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    )
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(
+    request: ChatCompletionRequest, _: bool = Depends(verify_api_key)
+):
+    """Chat completion endpoint (OpenAI compatible)."""
+    if state.model_type not in ("causal", "vision"):
+        raise HTTPException(
+            status_code=400,
+            detail="Chat completions only available for causal or vision models",
         )
 
-        return ChatCompletionResponse(
-            id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
-            created=int(time.time()),
-            model=state.alias,
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=ChatMessage(role="assistant", content=response_text),
-                    finish_reason="stop",
-                )
-            ],
-            usage={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
-        )
-
+    try:
+        if state.model_type == "vision":
+            return await _chat_completion_vision(request)
+        return await _chat_completion_causal(request)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[ERROR] {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -816,7 +1054,9 @@ def parse_args():
         "--model-id", required=True, help="HuggingFace model ID or path"
     )
     parser.add_argument(
-        "--model-type", choices=["causal", "classification", "embedding"], required=True
+        "--model-type",
+        choices=["causal", "classification", "embedding", "vision"],
+        required=True,
     )
     parser.add_argument("--alias", required=True, help="Model alias")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")

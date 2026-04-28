@@ -25,6 +25,7 @@ from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,
+    HuggingFaceVisionConfig,
 )
 
 # Create the discriminated union type for InstanceConfig
@@ -34,6 +35,7 @@ InstanceConfig = Annotated[
         HuggingFaceCausalConfig,
         HuggingFaceClassificationConfig,
         HuggingFaceEmbeddingConfig,
+        HuggingFaceVisionConfig,
     ],
     Field(discriminator="backend_type"),
 ]
@@ -49,6 +51,7 @@ __all__ = [
     "HuggingFaceCausalConfig",
     "HuggingFaceClassificationConfig",
     "HuggingFaceEmbeddingConfig",
+    "HuggingFaceVisionConfig",
     # Instance models
     "Instance",
     "InstanceCreate",
