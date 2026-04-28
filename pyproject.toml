@@ -36,9 +36,9 @@ dependencies = [
 [project.optional-dependencies]
 nvidia = ["nvidia-ml-py>=13.580.82"]
 huggingface = [
-    "torch>=2.0.0",
-    "transformers>=4.35.0",
-    "accelerate>=0.24.0",
+    "torch>=2.5.0",
+    "transformers>=4.57.1",
+    "accelerate>=1.0.0",
 ]
 all = ["solar-host[nvidia,huggingface]"]
 dev = ["pytest>=9.0"]

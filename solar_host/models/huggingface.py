@@ -45,6 +45,21 @@ class HuggingFaceCausalConfig(BaseModel):
     use_flash_attention: bool = Field(
         default=True, description="Use Flash Attention 2 if available"
     )
+    default_thinking_mode: Literal["thinking", "chat"] = Field(
+        default="thinking",
+        description=(
+            "Default thinking mode for thinking-capable models (e.g. DeepSeek-V4) "
+            "when the request omits the field."
+        ),
+    )
+    default_reasoning_effort: Optional[Literal["low", "medium", "high", "max"]] = Field(
+        default=None,
+        description=(
+            "Default reasoning effort for thinking-capable models when the request "
+            "omits the field. Only 'high' and 'max' currently affect the encoded "
+            "prompt for DeepSeek-V4."
+        ),
+    )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
     port: Optional[int] = Field(
         default=None, description="Port (auto-assigned if not specified)"

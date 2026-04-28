@@ -26,7 +26,7 @@ import time
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional, List, Dict, Union, TYPE_CHECKING
+from typing import Any, Optional, List, Dict, Literal, Union, TYPE_CHECKING
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -68,12 +68,50 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
+class ToolFunctionCall(BaseModel):
+    """OpenAI-compatible function call payload inside a tool_call."""
+
+    name: str
+    # ``arguments`` is a JSON-encoded string per OpenAI's spec.
+    arguments: str = ""
+
+
+class ToolCall(BaseModel):
+    """OpenAI-compatible tool call (function-only flavor)."""
+
+    id: str = Field(default_factory=lambda: f"call_{uuid.uuid4().hex[:24]}")
+    type: Literal["function"] = "function"
+    function: ToolFunctionCall
+
+
 class ChatMessage(BaseModel):
     role: str
     # Either a plain string (text-only) or an OpenAI-style list of content parts
-    # like [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"..."}}]
-    content: Union[str, List[Dict[str, Any]]]
+    # like [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"..."}}].
+    # ``None`` is permitted for assistant messages that contain only tool_calls.
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     name: Optional[str] = None
+    # OpenAI standard fields. ``reasoning_content`` is what downstream apps expect
+    # for thinking-mode models (DeepSeek-V4, etc.); ``tool_calls`` and
+    # ``tool_call_id`` carry tool-use state across turns.
+    reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+
+
+class FunctionDefinition(BaseModel):
+    """OpenAI-style function tool definition (the ``function`` field of a tool)."""
+
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+
+
+class ToolDefinition(BaseModel):
+    """OpenAI-style tool entry submitted on the request."""
+
+    type: Literal["function"] = "function"
+    function: FunctionDefinition
 
 
 class ChatCompletionRequest(BaseModel):
@@ -84,6 +122,13 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     stream: Optional[bool] = False
     stop: Optional[List[str]] = None
+    # OpenAI tool-calling.
+    tools: Optional[List[ToolDefinition]] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    # DeepSeek-V4 specific knobs (ignored by other models). Defaults are filled
+    # from the server's CLI flags when the request omits them.
+    thinking_mode: Optional[Literal["thinking", "chat"]] = None
+    reasoning_effort: Optional[Literal["low", "medium", "high", "max"]] = None
 
 
 class CompletionRequest(BaseModel):
@@ -219,6 +264,11 @@ class ServerState:
         self.normalize_embeddings: bool = True
         self.api_key: str = ""
         self.created_at: int = int(datetime.now(timezone.utc).timestamp())
+        # Architecture flags + chat defaults. ``is_deepseek_v4`` switches the
+        # causal chat path to the vendored DSV4 encoder/parser.
+        self.is_deepseek_v4: bool = False
+        self.default_thinking_mode: str = "thinking"
+        self.default_reasoning_effort: Optional[str] = None
 
     def ensure_loaded(self) -> None:
         """Ensure model and tokenizer are loaded, raise if not."""
@@ -266,7 +316,7 @@ class ServerState:
         normalize_embeddings: bool = True,
     ):
         """Load the model based on type."""
-        from transformers import AutoTokenizer
+        from transformers import AutoConfig, AutoTokenizer
 
         self.model_id = model_id
         self.model_type = model_type
@@ -276,12 +326,38 @@ class ServerState:
         self.labels = labels
         self.normalize_embeddings = normalize_embeddings
 
+        # Inspect the model config up-front so we can pick a sensible dispatch
+        # strategy (e.g. DeepSeek-V4 ships FP4+FP8 mixed weights and must keep
+        # ``dtype="auto"`` so transformers honors the ``quantization_config``
+        # block).
+        try:
+            hf_config = AutoConfig.from_pretrained(
+                model_id, trust_remote_code=trust_remote_code
+            )
+            arch_model_type = getattr(hf_config, "model_type", "")
+        except Exception as exc:  # pragma: no cover - logged for diagnostics
+            logger.warning(
+                f"Could not pre-load AutoConfig for {model_id}: {exc}. "
+                "Falling back to defaults."
+            )
+            arch_model_type = ""
+
+        self.is_deepseek_v4 = arch_model_type == "deepseek_v4"
+        if self.is_deepseek_v4 and dtype != "auto":
+            logger.warning(
+                f"DeepSeek-V4 weights are FP4+FP8 mixed; ignoring requested dtype "
+                f"'{dtype}' and using 'auto' so transformers can dequantize "
+                "according to the model's quantization_config."
+            )
+            dtype = "auto"
+
         model_dtype = self.get_dtype(dtype)
 
         logger.info(f"Loading model: {model_id}")
         logger.info(f"Model type: {model_type}")
+        logger.info(f"Architecture: {arch_model_type or '<unknown>'}")
         logger.info(f"Device: {self.device}")
-        logger.info(f"Dtype: {model_dtype}")
+        logger.info(f"Dtype: {dtype} -> {model_dtype}")
 
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(
@@ -299,20 +375,33 @@ class ServerState:
         if model_type == "causal":
             from transformers import AutoModelForCausalLM
 
+            # DeepSeek-V4 (and other large MoE models) need accelerate-driven
+            # placement so FP4 expert shards land on the unified-memory device
+            # alongside the FP8 backbone. For everything else we keep the
+            # historic behavior (single-device on CUDA, manual ``.to()`` on MPS).
+            if self.is_deepseek_v4:
+                device_map: Optional[Union[str, Dict[str, Any]]] = "auto"
+                pass_dtype: Any = "auto"
+            else:
+                device_map = self.device if self.device != "mps" else None
+                pass_dtype = model_dtype
+
             model_kwargs: Dict[str, object] = {
-                "dtype": model_dtype,
+                "dtype": pass_dtype,
                 "trust_remote_code": trust_remote_code,
-                "device_map": self.device if self.device != "mps" else None,
+                "device_map": device_map,
             }
 
-            # Add flash attention if supported and requested
+            # Add flash attention if supported and requested. Flash-Attn 2 is
+            # CUDA-only, so MPS hosts (e.g. Mac Studio M3 Ultra) silently skip.
             if use_flash_attention and self.device == "cuda":
                 model_kwargs["attn_implementation"] = "flash_attention_2"
 
             model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
 
-            # For MPS, move model manually
-            if self.device == "mps":
+            # For MPS without device_map, move model manually. With
+            # device_map="auto" accelerate has already placed the modules.
+            if self.device == "mps" and device_map is None:
                 target_device = torch.device(self.device)
                 model = model.to(device=target_device)  # type: ignore[call-overload]
 
@@ -551,6 +640,9 @@ def _normalize_messages_for_processor(
     images: List[Any] = []
 
     for m in messages:
+        if m.content is None:
+            norm_messages.append({"role": m.role, "content": ""})
+            continue
         if isinstance(m.content, str):
             norm_messages.append({"role": m.role, "content": m.content})
             continue
@@ -576,8 +668,243 @@ def _normalize_messages_for_processor(
     return norm_messages, images
 
 
+def _openai_messages_to_dsv4(
+    request: ChatCompletionRequest,
+) -> List[Dict[str, Any]]:
+    """Convert OpenAI-style request messages into the dict shape expected by
+    the vendored ``encoding_dsv4.encode_messages``.
+
+    Tools, when present on the request, are attached to the first ``system``
+    message (the DSV4 encoder injects the DSML schema block from there). If
+    no system message exists, a synthetic empty one is prepended.
+
+    NOTE: Streaming + incremental tool-call parsing is intentionally not
+    supported here -- the vendored parser only handles a complete completion.
+    """
+    out: List[Dict[str, Any]] = []
+    for m in request.messages:
+        # Normalize ``content`` to a plain string. The DSV4 encoder also
+        # supports a ``content_blocks`` form that we don't surface to callers.
+        if isinstance(m.content, list):
+            text_parts: List[str] = []
+            for part in m.content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "DeepSeek-V4 causal model only accepts text content "
+                            "parts; multimodal parts are not supported."
+                        ),
+                    )
+            content_str: Optional[str] = "".join(text_parts)
+        else:
+            content_str = m.content
+
+        msg: Dict[str, Any] = {"role": m.role}
+        if content_str is not None:
+            msg["content"] = content_str
+        if m.reasoning_content is not None:
+            msg["reasoning_content"] = m.reasoning_content
+        if m.tool_calls:
+            # Encoder expects OpenAI-style tool_calls: ``{function: {name, arguments}}``.
+            msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in m.tool_calls
+            ]
+        if m.tool_call_id is not None:
+            msg["tool_call_id"] = m.tool_call_id
+        out.append(msg)
+
+    if request.tools:
+        tools_payload = [t.model_dump(exclude_none=True) for t in request.tools]
+        # Attach tools to the first system message; create one if absent.
+        for msg in out:
+            if msg.get("role") == "system":
+                msg["tools"] = tools_payload
+                break
+        else:
+            out.insert(0, {"role": "system", "content": "", "tools": tools_payload})
+
+    return out
+
+
+def _dsv4_eos_token_ids(tokenizer: Any) -> Optional[List[int]]:
+    """Resolve the DSV4 end-of-sentence token id list, falling back to the
+    tokenizer's ``eos_token_id`` if the special token is missing.
+    """
+    from solar_host.servers.deepseek_v4 import eos_token as dsv4_eos
+
+    ids: List[int] = []
+    try:
+        tid = tokenizer.convert_tokens_to_ids(dsv4_eos)
+        if isinstance(tid, int) and tid >= 0:
+            ids.append(tid)
+    except Exception:
+        pass
+    fallback = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(fallback, int) and fallback >= 0 and fallback not in ids:
+        ids.append(fallback)
+    return ids or None
+
+
+async def _chat_completion_causal_deepseek_v4(
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse:
+    """Chat completion implementation for DeepSeek-V4 causal models.
+
+    Uses the vendored ``encoding_dsv4`` encoder/parser instead of the
+    tokenizer's (absent) Jinja chat template. Surfaces ``reasoning_content``
+    and DSML-format tool calls in the OpenAI response.
+    """
+    from solar_host.servers.deepseek_v4 import (
+        encode_messages,
+        parse_message_from_completion_text,
+        eos_token as dsv4_eos_token,
+    )
+
+    state.ensure_loaded()
+    model = state.model
+    tokenizer = state.tokenizer
+    assert model is not None and tokenizer is not None  # Type narrowing
+
+    start_time = time.time()
+    logger.info(f"[REQUEST] model={state.alias} endpoint=/v1/chat/completions")
+
+    thinking_mode = request.thinking_mode or state.default_thinking_mode or "thinking"
+    reasoning_effort = request.reasoning_effort or state.default_reasoning_effort
+    # The upstream encoder only supports {"max", "high", None} for the prefix;
+    # silently downgrade unsupported levels.
+    if reasoning_effort not in (None, "high", "max"):
+        reasoning_effort = None
+
+    dsv4_messages = _openai_messages_to_dsv4(request)
+
+    try:
+        prompt = encode_messages(
+            dsv4_messages,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
+        )
+    except Exception as exc:
+        logger.error(f"[ERROR] DSV4 encode failed: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Failed to encode messages: {exc}"
+        )
+
+    # ``add_special_tokens=False``: BOS is already inside the encoded prompt.
+    encoded = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=state.max_length,
+        add_special_tokens=False,
+    )
+    inputs = encoded.to(state.device)
+
+    input_ids: torch.Tensor = inputs["input_ids"]  # type: ignore[assignment]
+    prompt_tokens: int = int(input_ids.shape[1])
+    max_new_tokens = request.max_tokens or (state.max_length - prompt_tokens)
+
+    eos_ids = _dsv4_eos_token_ids(tokenizer)
+
+    # Per the model card: temperature=1.0, top_p=1.0 for both Flash and Pro.
+    temperature = request.temperature if request.temperature is not None else 1.0
+    top_p = request.top_p if request.top_p is not None else 1.0
+
+    with torch.no_grad():
+        outputs = model.generate(  # type: ignore[operator]
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            do_sample=temperature != 0,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=eos_ids if eos_ids else tokenizer.eos_token_id,
+        )
+
+    generated_ids = outputs[0][prompt_tokens:]
+    completion_tokens = len(generated_ids)
+    # Decode WITHOUT stripping specials so the parser can find <think>,
+    # </think>, ｜DSML｜* and the EOS marker.
+    raw_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
+
+    # ``parse_message_from_completion_text`` requires a trailing EOS marker.
+    if not raw_text.endswith(dsv4_eos_token):
+        raw_text = raw_text + dsv4_eos_token
+
+    try:
+        parsed = parse_message_from_completion_text(
+            raw_text, thinking_mode=thinking_mode
+        )
+    except Exception as exc:
+        logger.error(f"[ERROR] DSV4 parse failed: {exc}; raw={raw_text!r}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse DeepSeek-V4 completion: {exc}",
+        )
+
+    parsed_tool_calls = parsed.get("tool_calls") or []
+    response_tool_calls: Optional[List[ToolCall]] = None
+    if parsed_tool_calls:
+        response_tool_calls = [
+            ToolCall(
+                id=f"call_{uuid.uuid4().hex[:24]}",
+                type="function",
+                function=ToolFunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"],
+                ),
+            )
+            for tc in parsed_tool_calls
+        ]
+
+    response_message = ChatMessage(
+        role="assistant",
+        content=parsed.get("content") or "",
+        reasoning_content=parsed.get("reasoning_content") or None,
+        tool_calls=response_tool_calls,
+    )
+
+    finish_reason = "tool_calls" if response_tool_calls else "stop"
+
+    elapsed_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"[COMPLETE] model={state.alias} tokens={completion_tokens} time_ms={elapsed_ms:.1f}"
+    )
+
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        created=int(time.time()),
+        model=state.alias,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=response_message,
+                finish_reason=finish_reason,
+            )
+        ],
+        usage={
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    )
+
+
 async def _chat_completion_causal(request: ChatCompletionRequest) -> ChatCompletionResponse:
     """Chat completion implementation for causal (text-only) models."""
+    if state.is_deepseek_v4:
+        return await _chat_completion_causal_deepseek_v4(request)
+
     state.ensure_loaded()
     model = state.model
     tokenizer = state.tokenizer
@@ -589,6 +916,8 @@ async def _chat_completion_causal(request: ChatCompletionRequest) -> ChatComplet
     # Causal text-only path expects plain string content.
     plain_messages: List[Dict[str, str]] = []
     for m in request.messages:
+        if m.content is None:
+            continue
         if not isinstance(m.content, str):
             raise HTTPException(
                 status_code=400,
@@ -1081,6 +1410,25 @@ def parse_args():
         action="store_true",
         help="L2 normalize embedding vectors",
     )
+    parser.add_argument(
+        "--default-thinking-mode",
+        choices=["thinking", "chat"],
+        default="thinking",
+        help=(
+            "Default thinking mode for DeepSeek-V4 (and other thinking-capable "
+            "models) when the request omits ``thinking_mode``."
+        ),
+    )
+    parser.add_argument(
+        "--default-reasoning-effort",
+        choices=["low", "medium", "high", "max"],
+        default=None,
+        help=(
+            "Default reasoning effort for DeepSeek-V4 when the request omits "
+            "``reasoning_effort``. Only ``high``/``max`` actually change the "
+            "encoded prompt; ``low``/``medium`` are accepted for compatibility."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1094,6 +1442,10 @@ def main():
 
     # Set API key
     state.api_key = args.api_key
+
+    # Chat-mode defaults (DeepSeek-V4 etc.)
+    state.default_thinking_mode = args.default_thinking_mode
+    state.default_reasoning_effort = args.default_reasoning_effort
 
     # Load model
     state.load_model(

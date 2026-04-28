@@ -281,13 +281,44 @@ All requests require an `X-API-Key` header with your configured API key from the
 | `model_id` | Yes | - | HuggingFace model ID or local path |
 | `alias` | Yes | - | Model alias for routing |
 | `device` | No | `"auto"` | Device: `auto`, `cuda`, `mps`, `cpu` |
-| `dtype` | No | `"auto"` | Data type: `auto`, `float16`, `bfloat16`, `float32` |
+| `dtype` | No | `"auto"` | Data type: `auto`, `float16`, `bfloat16`, `float32`. Forced to `auto` for DeepSeek-V4 (FP4+FP8 mixed weights). |
 | `max_length` | No | 4096 | Maximum sequence length |
 | `trust_remote_code` | No | false | Trust remote code from HuggingFace |
-| `use_flash_attention` | No | true | Use Flash Attention 2 if available |
+| `use_flash_attention` | No | true | Use Flash Attention 2 if available (CUDA only; ignored on MPS/CPU) |
+| `default_thinking_mode` | No | `"thinking"` | Default `thinking_mode` for DeepSeek-V4 chat requests when omitted: `"thinking"` or `"chat"` |
+| `default_reasoning_effort` | No | - | Default `reasoning_effort` for DeepSeek-V4 chat requests when omitted: `"low"`, `"medium"`, `"high"`, or `"max"` |
 | `host` | No | "0.0.0.0" | Host to bind to |
 | `port` | No | auto | Port (auto-assigned if not specified) |
 | `api_key` | Yes | - | API key for this instance |
+
+### DeepSeek-V4 Notes
+
+DeepSeek-V4 (Flash/Pro) is supported through the `huggingface_causal` backend
+with first-class chat-template handling:
+
+- **No Jinja chat template.** The upstream Python encoder/parser
+  (`encoding/encoding_dsv4.py`) is vendored at
+  `solar_host/servers/deepseek_v4/encoding_dsv4.py`. Detection is automatic via
+  `AutoConfig.model_type == "deepseek_v4"`.
+- **Reasoning is exposed as `reasoning_content`** on the assistant message in
+  the OpenAI response (the standard field downstream apps expect for
+  thinking-mode models).
+- **Tool calling** uses the upstream DSML format on the wire; the server
+  translates request `tools` (OpenAI schema) into the DSML schema block and
+  parses model output back into OpenAI `tool_calls`. Streaming with tool calls
+  is **not** supported (the upstream parser only handles complete completions).
+- **Thinking mode + reasoning effort** are surfaced as
+  `thinking_mode` (`"thinking"` | `"chat"`) and `reasoning_effort`
+  (`"low"` | `"medium"` | `"high"` | `"max"`) on the chat-completion request.
+  Server-wide defaults come from `default_thinking_mode` /
+  `default_reasoning_effort` on the instance config.
+- **Hardware.** Tested deployment target: **Apple Mac Studio M3 Ultra (MPS)**.
+  Resident size for `DeepSeek-V4-Flash` (FP4 experts + FP8 backbone) is
+  ~160 GB and fits on the 256/512 GB unified-memory configurations.
+  `device_map="auto"` is forced for V4 so accelerate handles MoE shard
+  placement; Flash-Attn 2 is automatically disabled on non-CUDA hosts.
+- **Sampling.** Per the model card, defaults are `temperature=1.0,
+  top_p=1.0`; pass-through of caller-provided values is preserved.
 
 ### HuggingFace Classification Config Parameters
 
@@ -374,6 +405,24 @@ All requests require an `X-API-Key` header with your configured API key from the
   "dtype": "float16",
   "max_length": 2048,
   "api_key": "phi2-key"
+}
+```
+
+### HuggingFace - DeepSeek-V4-Flash on Mac Studio M3 Ultra (MPS)
+
+```json
+{
+  "backend_type": "huggingface_causal",
+  "model_id": "deepseek-ai/DeepSeek-V4-Flash",
+  "alias": "deepseek-v4:flash",
+  "device": "mps",
+  "dtype": "auto",
+  "max_length": 131072,
+  "trust_remote_code": true,
+  "use_flash_attention": false,
+  "default_thinking_mode": "thinking",
+  "default_reasoning_effort": "high",
+  "api_key": "dsv4-key"
 }
 ```
 

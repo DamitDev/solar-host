@@ -101,6 +101,21 @@ class HuggingFaceRunner(BackendRunner):
         if getattr(config, "use_flash_attention", True):
             cmd.append("--use-flash-attention")
 
+        # For causal models, propagate chat-mode defaults so the server has a
+        # fallback when /v1/chat/completions requests omit ``thinking_mode`` /
+        # ``reasoning_effort`` (DeepSeek-V4 etc.).
+        if model_type == "causal":
+            default_thinking_mode = getattr(config, "default_thinking_mode", None)
+            if default_thinking_mode:
+                cmd.extend(["--default-thinking-mode", default_thinking_mode])
+            default_reasoning_effort = getattr(
+                config, "default_reasoning_effort", None
+            )
+            if default_reasoning_effort:
+                cmd.extend(
+                    ["--default-reasoning-effort", default_reasoning_effort]
+                )
+
         # For classification models, pass labels if specified
         if model_type == "classification" and getattr(config, "labels", None):
             cmd.extend(["--labels", ",".join(config.labels)])
