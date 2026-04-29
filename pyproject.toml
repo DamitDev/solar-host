@@ -53,3 +53,7 @@ Issues = "https://github.com/DamitDev/solar-host/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["solar_host"]
+
+[tool.black]
+target-version = ["py312"]
+line-length = 88

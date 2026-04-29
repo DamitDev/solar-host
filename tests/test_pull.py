@@ -45,9 +45,7 @@ def _isolated_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("solar_host.config.settings.hf_token", "")
     # In-process pulls so mocks on _pull_* apply; low threshold so tmp disks pass.
     monkeypatch.setattr("solar_host.config.settings.pull_use_subprocess", False)
-    monkeypatch.setattr(
-        "solar_host.config.settings.pull_disk_poll_interval_s", 0.05
-    )
+    monkeypatch.setattr("solar_host.config.settings.pull_disk_poll_interval_s", 0.05)
     monkeypatch.setattr("solar_host.config.settings.min_free_disk_gb", 0.001)
     return models
 
