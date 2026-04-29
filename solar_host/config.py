@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Application settings."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     api_key: str = "change-me-please"
     host: str = "0.0.0.0"
@@ -91,12 +93,64 @@ def migrate_config_data(config_data: Dict[str, Any]) -> Dict[str, Any]:
     return config_data
 
 
+def resolve_model_source(model_source: str) -> str:
+    """Resolve a model source URI to a filesystem path.
+
+    Supported URIs:
+    - local://<path>: Relative to settings.models_dir
+    - local:///<path>: Absolute path (must be within settings.models_dir)
+
+    Rejected URIs (must be pulled first):
+    - repo://...
+    - huggingface://...
+    """
+    if model_source.startswith("repo://") or model_source.startswith("huggingface://"):
+        raise ValueError(
+            "Model must be resolved via POST /models/pull before instance creation. "
+            "Use local:// or provide model/model_id path."
+        )
+
+    if not model_source.startswith("local://"):
+        # Not a URI, return as is (could be a plain path)
+        return model_source
+
+    path_part = model_source[len("local://") :]
+    models_dir = Path(settings.models_dir).resolve()
+
+    if path_part.startswith("/"):
+        # Absolute path local:///path
+        resolved_path = Path(path_part).resolve()
+    else:
+        # Relative path local://path
+        resolved_path = (models_dir / path_part).resolve()
+
+    # Security check: must be within models_dir
+    try:
+        resolved_path.relative_to(models_dir)
+    except ValueError:
+        raise ValueError(
+            f"Resolved path {resolved_path} is outside of MODELS_DIR ({models_dir})"
+        )
+
+    return str(resolved_path)
+
+
 def parse_instance_config(config_data: Dict[str, Any]) -> Any:
     """Parse config data into the appropriate config type based on backend_type."""
     # Migrate first
     config_data = migrate_config_data(config_data)
 
     backend_type = config_data.get("backend_type", "llamacpp")
+
+    # Resolve model_source if present
+    model_source = config_data.get("model_source")
+    if model_source:
+        resolved_path = resolve_model_source(model_source)
+        if backend_type == "llamacpp":
+            config_data["model"] = resolved_path
+        else:
+            # All HuggingFace types use model_id
+            config_data["model_id"] = resolved_path
 
     if backend_type == "llamacpp":
         return LlamaCppConfig(**config_data)

@@ -25,7 +25,19 @@ class LlamaCppConfig(BaseModel):
             data.pop("api_key", None)
         return data
 
-    model: str = Field(..., description="Path to the GGUF model file")
+    model_source: Optional[str] = Field(
+        default=None, description="Model source URI (e.g. local://path/to/model.gguf)"
+    )
+    model: Optional[str] = Field(
+        default=None, description="Path to the GGUF model file"
+    )
+
+    @model_validator(mode="after")
+    def check_model_or_source(self) -> "LlamaCppConfig":
+        if not self.model and not self.model_source:
+            raise ValueError("Either 'model' or 'model_source' must be provided")
+        return self
+
     mmproj: Optional[str] = Field(
         default=None,
         description="Path to multimodal projector GGUF file for vision models",
