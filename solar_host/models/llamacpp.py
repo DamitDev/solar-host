@@ -1,7 +1,8 @@
 """LlamaCpp backend configuration models."""
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Optional, Literal, Any
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class LlamaCppConfig(BaseModel):
@@ -9,6 +10,8 @@ class LlamaCppConfig(BaseModel):
 
     Note: api_key is NOT a config parameter - instances always use the host's API key.
     """
+
+    model_config = ConfigDict(protected_namespaces=())
 
     backend_type: Literal["llamacpp"] = Field(
         default="llamacpp", description="Backend type identifier"

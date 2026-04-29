@@ -6,7 +6,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from solar_host.models.base import Instance, InstanceStatus
 from solar_host.models.llamacpp import LlamaCppConfig
@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     """Application settings."""
 
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
     api_key: str = "change-me-please"
     host: str = "0.0.0.0"
     port: int = 8001
@@ -33,6 +35,12 @@ class Settings(BaseSettings):
     log_buffer_size: int = 1000
     models_dir: str = "./models"
     min_free_disk_gb: float = 2.0
+    # When True, run Harbor/HF downloads in a worker process so the parent can
+    # cancel on low disk. When False, run in-process (faster; required for unit
+    # tests that mock _pull_harbor / _pull_huggingface).
+    pull_use_subprocess: bool = True
+    # How often to poll disk while a subprocess pull is in flight.
+    pull_disk_poll_interval_s: float = 0.5
 
     # Solar-control connection settings (WebSocket 2.0)
     # URL(s) to solar-control's host channel endpoint
@@ -55,10 +63,6 @@ class Settings(BaseSettings):
 
     # HuggingFace Hub token (optional for public models, required for gated models)
     hf_token: str = ""
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 settings = Settings()

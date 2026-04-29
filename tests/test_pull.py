@@ -43,6 +43,12 @@ def _isolated_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("solar_host.config.settings.harbor_username", "robot")
     monkeypatch.setattr("solar_host.config.settings.harbor_password", "secret")
     monkeypatch.setattr("solar_host.config.settings.hf_token", "")
+    # In-process pulls so mocks on _pull_* apply; low threshold so tmp disks pass.
+    monkeypatch.setattr("solar_host.config.settings.pull_use_subprocess", False)
+    monkeypatch.setattr(
+        "solar_host.config.settings.pull_disk_poll_interval_s", 0.05
+    )
+    monkeypatch.setattr("solar_host.config.settings.min_free_disk_gb", 0.001)
     return models
 
 
@@ -89,6 +95,40 @@ def _make_manifest_entry(**overrides) -> ManifestEntry:
     }
     defaults.update(overrides)
     return ManifestEntry(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# Proactive disk space (S-018)
+# ---------------------------------------------------------------------------
+
+
+class TestProactiveDiskSpace:
+    def test_returns_507_when_size_bytes_exceeds_available(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        with patch(
+            "solar_host.models_manager.get_disk_info",
+            return_value={"available_gb": 1.0, "used_gb": 1.0, "total_gb": 2.0},
+        ):
+            body = {**_harbor_body(), "size_bytes": 200 * 1024**3}
+            resp = client.post("/models/pull", json=body, headers=_headers())
+        assert resp.status_code == 507
+        detail = resp.json()["detail"]
+        assert "Insufficient disk space" in detail
+        assert "1.00" in detail
+        assert "200.00" in detail
+
+    def test_returns_507_when_unknown_size_below_min_free(
+        self, client: TestClient, _isolated_env: Path, monkeypatch
+    ):
+        monkeypatch.setattr("solar_host.config.settings.min_free_disk_gb", 100.0)
+        with patch(
+            "solar_host.models_manager.get_disk_info",
+            return_value={"available_gb": 5.0, "used_gb": 1.0, "total_gb": 6.0},
+        ):
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+        assert resp.status_code == 507
+        assert "100.00" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +225,14 @@ class TestSourceUriMismatch:
 
 
 class TestCacheHit:
-    def test_cache_hit_returns_cached_true(self, client: TestClient):
+    def test_cache_hit_returns_cached_true(
+        self, client: TestClient, _isolated_env: Path
+    ):
         ensure_models_dir()
-        add_manifest_entry(_make_manifest_entry())
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "model.gguf").write_bytes(b"x")
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
 
         with patch("solar_host.models_manager._pull_harbor") as mock_pull:
             resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
@@ -196,23 +241,31 @@ class TestCacheHit:
         data = resp.json()
         assert data["cached"] is True
         assert data["source_uri"] == "repo://iris-osl:v3"
-        assert data["path"] == "/opt/solar/models/repo--iris-osl--v3"
+        assert data["path"] == str(slug_dir.resolve())
         mock_pull.assert_not_called()
 
-    def test_cache_hit_returns_stored_path(self, client: TestClient):
+    def test_cache_hit_returns_stored_path(
+        self, client: TestClient, _isolated_env: Path
+    ):
         ensure_models_dir()
-        add_manifest_entry(_make_manifest_entry(path="/custom/path/to/model"))
+        custom = _isolated_env / "custom-path-to-model"
+        custom.mkdir(parents=True, exist_ok=True)
+        (custom / "model.gguf").write_bytes(b"x")
+        add_manifest_entry(_make_manifest_entry(path=str(custom.resolve())))
 
         resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
-        assert resp.json()["path"] == "/custom/path/to/model"
+        assert resp.json()["path"] == str(custom.resolve())
 
-    def test_hf_cache_hit(self, client: TestClient):
+    def test_hf_cache_hit(self, client: TestClient, _isolated_env: Path):
         ensure_models_dir()
+        slug_dir = _isolated_env / "hf--microsoft--phi-3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "config.json").write_bytes(b"{}")
         add_manifest_entry(
             _make_manifest_entry(
                 slug="hf--microsoft--phi-3",
                 source_uri="huggingface://microsoft/phi-3",
-                path="/opt/solar/models/hf--microsoft--phi-3",
+                path=str(slug_dir.resolve()),
             )
         )
         with patch("solar_host.models_manager._pull_huggingface") as mock_dl:

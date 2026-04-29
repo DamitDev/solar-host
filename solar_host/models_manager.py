@@ -8,6 +8,7 @@ The manifest file (MODELS_DIR/manifest.json) is the single source of truth for
 cache detection.
 """
 
+import errno
 import json
 import logging
 import os
@@ -395,37 +396,46 @@ def pull_model(
             logger.warning("Removing stale model directory before pull: %s", target_dir)
             shutil.rmtree(target_dir, ignore_errors=True)
 
-        # 6. Download — monitored via Pebble to allow aborting on disk-full.
+        # 6. Download — subprocess + polling allows aborting on low disk (S-018).
+        # In-process mode skips the worker (used by unit tests that mock pull funcs).
         try:
-            with pebble.ProcessPool(max_workers=1) as pool:
+            if settings.pull_use_subprocess:
+                poll_s = max(0.05, settings.pull_disk_poll_interval_s)
+                with pebble.ProcessPool(max_workers=1) as pool:
+                    if source == "harbor":
+                        future = pool.schedule(
+                            _pull_harbor,
+                            args=(harbor_ref or "", target_dir, source_uri),
+                        )
+                    else:
+                        future = pool.schedule(
+                            _pull_huggingface,
+                            args=(model_id or "", target_dir, source_uri),
+                        )
+
+                    while not future.done():
+                        time.sleep(poll_s)
+                        disk = get_disk_info(str(get_models_dir()))
+                        if disk and disk["available_gb"] < settings.min_free_disk_gb:
+                            future.cancel()
+                            logger.error(
+                                "Aborting pull for %s: disk space dropped below %s GB",
+                                source_uri,
+                                settings.min_free_disk_gb,
+                            )
+                            raise ModelPullError(
+                                507,
+                                "insufficient_storage",
+                                "Insufficient disk space during download.",
+                                source_uri,
+                            )
+
+                    future.result()
+            else:
                 if source == "harbor":
-                    future = pool.schedule(
-                        _pull_harbor, args=(harbor_ref or "", target_dir, source_uri)
-                    )
+                    _pull_harbor(harbor_ref or "", target_dir, source_uri)
                 else:
-                    future = pool.schedule(
-                        _pull_huggingface, args=(model_id or "", target_dir, source_uri)
-                    )
-
-                while not future.done():
-                    time.sleep(2)
-                    disk = get_disk_info(str(get_models_dir()))
-                    if disk and disk["available_gb"] < settings.min_free_disk_gb:
-                        future.cancel()
-                        logger.error(
-                            "Aborting pull for %s: disk space dropped below %s GB",
-                            source_uri,
-                            settings.min_free_disk_gb,
-                        )
-                        raise ModelPullError(
-                            507,
-                            "insufficient_storage",
-                            "Insufficient disk space during download.",
-                            source_uri,
-                        )
-
-                # Propagate any exceptions from the worker process.
-                future.result()
+                    _pull_huggingface(model_id or "", target_dir, source_uri)
         except ModelPullError:
             shutil.rmtree(target_dir, ignore_errors=True)
             raise
@@ -433,6 +443,15 @@ def pull_model(
             shutil.rmtree(target_dir, ignore_errors=True)
             raise ModelPullError(
                 500, "model_pull_failed", f"Download process expired: {exc}", source_uri
+            ) from exc
+        except OSError as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            if exc.errno == errno.ENOSPC:
+                raise ModelPullError(
+                    507, "insufficient_storage", "Insufficient disk space.", source_uri
+                ) from exc
+            raise ModelPullError(
+                500, "model_pull_failed", str(exc), source_uri
             ) from exc
         except Exception as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
