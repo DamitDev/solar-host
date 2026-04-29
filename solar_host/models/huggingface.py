@@ -27,10 +27,20 @@ class HuggingFaceCausalConfig(BaseModel):
     backend_type: Literal["huggingface_causal"] = Field(
         default="huggingface_causal", description="Backend type identifier"
     )
-    model_id: str = Field(
-        ...,
+    model_source: Optional[str] = Field(
+        default=None, description="Model source URI (e.g. local://model_dir)"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
         description="HuggingFace model ID or local path (e.g., 'meta-llama/Llama-2-7b-hf')",
     )
+
+    @model_validator(mode="after")
+    def check_model_id_or_source(self) -> "HuggingFaceCausalConfig":
+        if not self.model_id and not self.model_source:
+            raise ValueError("Either 'model_id' or 'model_source' must be provided")
+        return self
+
     alias: str = Field(..., description="Model alias (e.g., llama2:7b)")
     device: str = Field(
         default="auto", description="Device to run on: auto, cuda, mps (Mac), cpu"
@@ -67,7 +77,19 @@ class HuggingFaceClassificationConfig(BaseModel):
     backend_type: Literal["huggingface_classification"] = Field(
         default="huggingface_classification", description="Backend type identifier"
     )
-    model_id: str = Field(..., description="HuggingFace model ID or local path")
+    model_source: Optional[str] = Field(
+        default=None, description="Model source URI (e.g. local://model_dir)"
+    )
+    model_id: Optional[str] = Field(
+        default=None, description="HuggingFace model ID or local path"
+    )
+
+    @model_validator(mode="after")
+    def check_model_id_or_source(self) -> "HuggingFaceClassificationConfig":
+        if not self.model_id and not self.model_source:
+            raise ValueError("Either 'model_id' or 'model_source' must be provided")
+        return self
+
     alias: str = Field(..., description="Model alias (e.g., classifier:deberta)")
     device: str = Field(
         default="auto", description="Device to run on: auto, cuda, mps (Mac), cpu"
@@ -106,10 +128,20 @@ class HuggingFaceEmbeddingConfig(BaseModel):
     backend_type: Literal["huggingface_embedding"] = Field(
         default="huggingface_embedding", description="Backend type identifier"
     )
-    model_id: str = Field(
-        ...,
+    model_source: Optional[str] = Field(
+        default=None, description="Model source URI (e.g. local://model_dir)"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
         description="HuggingFace model ID or local path (e.g., 'sentence-transformers/all-MiniLM-L6-v2')",
     )
+
+    @model_validator(mode="after")
+    def check_model_id_or_source(self) -> "HuggingFaceEmbeddingConfig":
+        if not self.model_id and not self.model_source:
+            raise ValueError("Either 'model_id' or 'model_source' must be provided")
+        return self
+
     alias: str = Field(..., description="Model alias (e.g., embed:minilm)")
     device: str = Field(
         default="auto", description="Device to run on: auto, cuda, mps (Mac), cpu"
@@ -151,10 +183,20 @@ class HuggingFaceVisionConfig(BaseModel):
     backend_type: Literal["huggingface_vision"] = Field(
         default="huggingface_vision", description="Backend type identifier"
     )
-    model_id: str = Field(
-        ...,
+    model_source: Optional[str] = Field(
+        default=None, description="Model source URI (e.g. local://model_dir)"
+    )
+    model_id: Optional[str] = Field(
+        default=None,
         description="HuggingFace model ID or local path (e.g., 'Qwen/Qwen2.5-VL-7B-Instruct')",
     )
+
+    @model_validator(mode="after")
+    def check_model_id_or_source(self) -> "HuggingFaceVisionConfig":
+        if not self.model_id and not self.model_source:
+            raise ValueError("Either 'model_id' or 'model_source' must be provided")
+        return self
+
     alias: str = Field(..., description="Model alias (e.g., qwen-vl:7b)")
     device: str = Field(
         default="auto", description="Device to run on: auto, cuda, mps (Mac), cpu"
