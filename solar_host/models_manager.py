@@ -450,9 +450,9 @@ def pull_model(
                 raise ModelPullError(
                     507, "insufficient_storage", "Insufficient disk space.", source_uri
                 ) from exc
-            raise ModelPullError(
-                500, "model_pull_failed", str(exc), source_uri
-            ) from exc
+            # huggingface_hub errors (e.g. RepositoryNotFoundError) subclass OSError
+            # via httpx.HTTPError; they must not be collapsed to a generic 500 here.
+            _map_download_exception(exc, source_uri)
         except Exception as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
             _map_download_exception(exc, source_uri)

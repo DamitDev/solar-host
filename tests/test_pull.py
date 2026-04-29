@@ -722,6 +722,25 @@ class TestMapDownloadException:
         assert resp.status_code == 404
         assert resp.json()["error"] == "not_found"
 
+    def test_hf_real_repository_not_found_not_swallowed_as_plain_oserror(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """RepositoryNotFoundError subclasses OSError (via httpx); pull must return 404."""
+        import httpx
+        from huggingface_hub.errors import RepositoryNotFoundError
+
+        req = httpx.Request(
+            "GET", "https://huggingface.co/api/models/microsoft/phi-3/revision/main"
+        )
+        hf_exc = RepositoryNotFoundError(
+            "Repository Not Found for url: https://huggingface.co/...",
+            response=httpx.Response(401, request=req),
+        )
+        with patch("huggingface_hub.snapshot_download", side_effect=hf_exc):
+            resp = client.post("/models/pull", json=_hf_body(), headers=_headers())
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "not_found"
+
     def test_hf_gated_repo_mapped(self, client: TestClient, _isolated_env: Path):
         exc = self._make_exc("huggingface_hub.utils", "GatedRepoError")
         with patch("solar_host.models_manager._pull_huggingface", side_effect=exc):
