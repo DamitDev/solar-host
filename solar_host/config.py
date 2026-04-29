@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     max_retries: int = 2
     log_buffer_size: int = 1000
     models_dir: str = "./models"
+    min_free_disk_gb: float = 2.0
 
     # Solar-control connection settings (WebSocket 2.0)
     # URL(s) to solar-control's host channel endpoint

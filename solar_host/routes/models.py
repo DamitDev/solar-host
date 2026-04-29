@@ -88,6 +88,7 @@ class PullRequest(BaseModel):
     harbor_ref: Optional[str] = None
     model_id: Optional[str] = None
     digest: Optional[str] = None
+    size_bytes: Optional[int] = None
 
 
 class PullResponse(BaseModel):
@@ -125,6 +126,12 @@ async def pull_model(req: PullRequest) -> Union[PullResponse, JSONResponse]:
     the manifest is updated atomically, and the new path is returned.
 
     The caller blocks until the model is fully available.
+
+    Contract for Distribution (S-019):
+    Before issuing a pull, solar-control should query the target host's /health
+    endpoint to check disk.available_gb. If the model size is known, it should
+    be passed as size_bytes here for proactive validation. If available space
+    drops below min_free_disk_gb during download, the pull will be aborted.
     """
     # Validate conditional required fields before doing any I/O.
     if req.source == "harbor" and not req.harbor_ref:
@@ -144,6 +151,7 @@ async def pull_model(req: PullRequest) -> Union[PullResponse, JSONResponse]:
             harbor_ref=req.harbor_ref,
             model_id=req.model_id,
             digest=req.digest,
+            size_bytes=req.size_bytes,
         )
     except ModelPullError as exc:
         return JSONResponse(
