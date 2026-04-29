@@ -562,9 +562,7 @@ def _normalize_messages_for_processor(
                 parts.append({"type": "text", "text": part.get("text", "")})
             elif ptype == "image_url":
                 image_url = part.get("image_url", {})
-                url = (
-                    image_url.get("url") if isinstance(image_url, dict) else image_url
-                )
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
                 if not url:
                     raise ValueError("image_url part missing 'url'")
                 images.append(_load_image_from_url(url))
@@ -576,7 +574,9 @@ def _normalize_messages_for_processor(
     return norm_messages, images
 
 
-async def _chat_completion_causal(request: ChatCompletionRequest) -> ChatCompletionResponse:
+async def _chat_completion_causal(
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse:
     """Chat completion implementation for causal (text-only) models."""
     state.ensure_loaded()
     model = state.model
@@ -659,7 +659,9 @@ async def _chat_completion_causal(request: ChatCompletionRequest) -> ChatComplet
     )
 
 
-async def _chat_completion_vision(request: ChatCompletionRequest) -> ChatCompletionResponse:
+async def _chat_completion_vision(
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse:
     """Chat completion implementation for vision/multimodal models."""
     state.ensure_loaded()
     model = state.model

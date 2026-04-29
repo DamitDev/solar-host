@@ -8,21 +8,23 @@ The manifest file (MODELS_DIR/manifest.json) is the single source of truth for
 cache detection.
 """
 
-import errno
 import json
 import logging
 import os
 import re
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+import pebble
 from pydantic import BaseModel
 
 from solar_host.config import settings
+from solar_host.memory_monitor import get_disk_info
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +302,7 @@ def pull_model(
     harbor_ref: Optional[str] = None,
     model_id: Optional[str] = None,
     digest: Optional[str] = None,
+    size_bytes: Optional[int] = None,
 ) -> dict:
     """Download a model from Harbor or HuggingFace Hub and record it in the manifest.
 
@@ -355,6 +358,22 @@ def pull_model(
 
         target_dir = get_models_dir() / slug
 
+        # 3.5 Proactive disk space validation.
+        disk = get_disk_info(str(get_models_dir()))
+        if disk:
+            available_gb = disk["available_gb"]
+            required_gb = (
+                (size_bytes / (1024**3)) if size_bytes else settings.min_free_disk_gb
+            )
+
+            if available_gb < required_gb:
+                raise ModelPullError(
+                    507,
+                    "insufficient_storage",
+                    f"Insufficient disk space. Available: {available_gb:.2f} GB, required: {required_gb:.2f} GB.",
+                    source_uri,
+                )
+
         # 4. Validate credentials before touching the filesystem.
         if source == "harbor":
             if not all(
@@ -376,23 +395,44 @@ def pull_model(
             logger.warning("Removing stale model directory before pull: %s", target_dir)
             shutil.rmtree(target_dir, ignore_errors=True)
 
-        # 6. Download — wrap in try/except to clean up on failure.
+        # 6. Download — monitored via Pebble to allow aborting on disk-full.
         try:
-            if source == "harbor":
-                _pull_harbor(harbor_ref or "", target_dir, source_uri)
-            else:
-                _pull_huggingface(model_id or "", target_dir, source_uri)
+            with pebble.ProcessPool(max_workers=1) as pool:
+                if source == "harbor":
+                    future = pool.schedule(
+                        _pull_harbor, args=(harbor_ref or "", target_dir, source_uri)
+                    )
+                else:
+                    future = pool.schedule(
+                        _pull_huggingface, args=(model_id or "", target_dir, source_uri)
+                    )
+
+                while not future.done():
+                    time.sleep(2)
+                    disk = get_disk_info(str(get_models_dir()))
+                    if disk and disk["available_gb"] < settings.min_free_disk_gb:
+                        future.cancel()
+                        logger.error(
+                            "Aborting pull for %s: disk space dropped below %s GB",
+                            source_uri,
+                            settings.min_free_disk_gb,
+                        )
+                        raise ModelPullError(
+                            507,
+                            "insufficient_storage",
+                            "Insufficient disk space during download.",
+                            source_uri,
+                        )
+
+                # Propagate any exceptions from the worker process.
+                future.result()
         except ModelPullError:
             shutil.rmtree(target_dir, ignore_errors=True)
             raise
-        except OSError as exc:
+        except pebble.ProcessExpired as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
-            if exc.errno == errno.ENOSPC:
-                raise ModelPullError(
-                    507, "insufficient_storage", "Insufficient disk space.", source_uri
-                ) from exc
             raise ModelPullError(
-                500, "model_pull_failed", str(exc), source_uri
+                500, "model_pull_failed", f"Download process expired: {exc}", source_uri
             ) from exc
         except Exception as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
