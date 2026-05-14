@@ -59,8 +59,3 @@ packages = ["solar_host"]
 target-version = ["py312"]
 line-length = 88
 
-[dependency-groups]
-dev = [
-    "black>=26.3.1",
-    "ruff>=0.15.13",
-]
