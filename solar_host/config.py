@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # HuggingFace Hub token (optional for public models, required for gated models)
     hf_token: str = ""
 
+    # Docker execution layer (S-022)
+    jobs_dir: str = "./jobs"
+    container_uid: int = 1000
+    container_gid: int = 1000
+    hf_cache_dir: str = "./hf-cache"
+
 
 settings = Settings()
 
