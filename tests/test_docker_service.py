@@ -345,6 +345,42 @@ def test_stream_logs_yields_decoded_lines():
     assert lines == ["hello\n", "world\n"]
 
 
+def test_stream_logs_default_tail_passed_to_docker():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter([])
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    list(svc.stream_logs("abc123"))
+    kwargs = mock_container.logs.call_args[1]
+    assert kwargs["tail"] == 50
+
+
+def test_stream_logs_custom_tail():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter([])
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    list(svc.stream_logs("abc123", tail=10))
+    kwargs = mock_container.logs.call_args[1]
+    assert kwargs["tail"] == 10
+
+
+def test_stream_logs_tail_zero_means_all():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter([])
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    list(svc.stream_logs("abc123", tail=0))
+    kwargs = mock_container.logs.call_args[1]
+    assert kwargs["tail"] == "all"
+
+
 def test_stream_logs_not_found_raises():
     client = MagicMock()
     client.containers.get.side_effect = _docker_errors.NotFound("not found")

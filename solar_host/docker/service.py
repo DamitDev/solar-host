@@ -178,12 +178,25 @@ class DockerService:
         except _docker_errors.NotFound as exc:
             raise ContainerStartError(container_id, f"Not found: {exc}") from exc
 
-    def stream_logs(self, container_id: str, follow: bool = True) -> Iterator[str]:
-        """Yield decoded log lines from the container."""
+    def stream_logs(
+        self, container_id: str, follow: bool = True, tail: int = 50
+    ) -> Iterator[str]:
+        """Yield decoded log lines from the container.
+
+        Args:
+            container_id: ID of the target container.
+            follow: Keep streaming until the container stops.
+            tail: Number of lines to show from the end of existing logs
+                before streaming new output. Pass ``0`` for all lines.
+        """
         try:
             container = self._client.containers.get(container_id)
             log_stream = container.logs(
-                stream=True, follow=follow, stdout=True, stderr=True
+                stream=True,
+                follow=follow,
+                stdout=True,
+                stderr=True,
+                tail=tail if tail > 0 else "all",
             )
             for chunk in log_stream:
                 if isinstance(chunk, bytes):
