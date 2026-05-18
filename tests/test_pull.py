@@ -349,6 +349,78 @@ class TestHarborPull:
         assert resp2.json()["cached"] is True
         mock_pull.assert_not_called()
 
+    def test_harbor_pull_persists_repo_metadata(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """D-016: Data Repository metadata fields round-trip into the manifest."""
+        body = {
+            **_harbor_body(),
+            "category": "model",
+            "name": "iris-osl",
+            "version": "v3",
+            "checksum": "sha256:abc123",
+            "metadata": {"format": "gguf", "quantization": "Q4_K_M"},
+        }
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._make_mock_pull(_isolated_env),
+        ):
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        entry = get_manifest_entry("repo://iris-osl:v3")
+        assert entry is not None
+        assert entry.category == "model"
+        assert entry.name == "iris-osl"
+        assert entry.version == "v3"
+        assert entry.checksum == "sha256:abc123"
+        assert entry.metadata == {"format": "gguf", "quantization": "Q4_K_M"}
+
+    def test_repo_metadata_surfaced_in_get_models(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """GET /models returns the Data Repository metadata for D-016 pulls."""
+        body = {
+            **_harbor_body(),
+            "category": "model",
+            "name": "iris-osl",
+            "version": "v3",
+            "metadata": {"format": "gguf"},
+        }
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._make_mock_pull(_isolated_env),
+        ):
+            client.post("/models/pull", json=body, headers=_headers())
+
+        resp = client.get("/models", headers=_headers())
+        assert resp.status_code == 200
+        entries = [m for m in resp.json() if m["name"] == "repo--iris-osl--v3"]
+        assert len(entries) == 1
+        m = entries[0]
+        assert m["category"] == "model"
+        assert m["model_name"] == "iris-osl"
+        assert m["version"] == "v3"
+        assert m["metadata"] == {"format": "gguf"}
+
+    def test_harbor_pull_without_repo_metadata_still_works(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Pulls that omit the D-016 fields are still accepted (back-compat)."""
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._make_mock_pull(_isolated_env),
+        ):
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+
+        assert resp.status_code == 200
+        entry = get_manifest_entry("repo://iris-osl:v3")
+        assert entry is not None
+        assert entry.category is None
+        assert entry.name is None
+        assert entry.version is None
+        assert entry.metadata is None
+
 
 # ---------------------------------------------------------------------------
 # HuggingFace pull (cache miss)

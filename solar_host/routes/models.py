@@ -36,7 +36,14 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 
 class ModelEntry(BaseModel):
-    """A single model entry returned by GET /models."""
+    """A single model entry returned by GET /models.
+
+    ``category``, ``model_name``, ``version`` and ``metadata`` are populated
+    from the manifest when the model was pulled with Data Repository
+    metadata (D-016); they are omitted on older entries.
+    """
+
+    model_config = {"protected_namespaces": ()}
 
     name: str
     path: str
@@ -44,6 +51,10 @@ class ModelEntry(BaseModel):
     source_uri: Optional[str] = None
     checksum: Optional[str] = None
     downloaded_at: Optional[str] = None
+    category: Optional[str] = None
+    model_name: Optional[str] = None
+    version: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 def _manifest_to_entries() -> List[ModelEntry]:
@@ -54,8 +65,12 @@ def _manifest_to_entries() -> List[ModelEntry]:
             path=e.path,
             size_bytes=e.size_bytes,
             source_uri=e.source_uri,
-            checksum=e.digest,
+            checksum=e.checksum or e.digest,
             downloaded_at=e.downloaded_at,
+            category=e.category,
+            model_name=e.name,
+            version=e.version,
+            metadata=e.metadata,
         )
         for e in manifest.models
     ]
@@ -79,7 +94,14 @@ async def list_models() -> List[ModelEntry]:
 
 
 class PullRequest(BaseModel):
-    """Request body for POST /models/pull (spec Section 3.6)."""
+    """Request body for POST /models/pull (spec Section 3.6).
+
+    The ``category``, ``name``, ``version``, ``checksum`` and ``metadata``
+    fields were added with D-016 so solar-control can forward the
+    authoritative metadata returned by Data Repository. They are optional and
+    stored on the manifest entry verbatim when present; the host does not
+    consult them for pull behaviour.
+    """
 
     model_config = {"protected_namespaces": ()}
 
@@ -89,6 +111,11 @@ class PullRequest(BaseModel):
     model_id: Optional[str] = None
     digest: Optional[str] = None
     size_bytes: Optional[int] = None
+    category: Optional[str] = None
+    name: Optional[str] = None
+    version: Optional[str] = None
+    checksum: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 class PullResponse(BaseModel):
@@ -152,6 +179,11 @@ async def pull_model(req: PullRequest) -> Union[PullResponse, JSONResponse]:
             model_id=req.model_id,
             digest=req.digest,
             size_bytes=req.size_bytes,
+            category=req.category,
+            name=req.name,
+            version=req.version,
+            checksum=req.checksum,
+            metadata=req.metadata,
         )
     except ModelPullError as exc:
         return JSONResponse(

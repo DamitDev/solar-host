@@ -37,7 +37,13 @@ MANIFEST_TMP_FILENAME = "manifest.json.tmp"
 
 
 class ManifestEntry(BaseModel):
-    """A single downloaded model tracked in the manifest."""
+    """A single downloaded model tracked in the manifest.
+
+    The ``category``, ``name``, ``version``, ``checksum`` and ``metadata``
+    fields are optional and were introduced with D-016 to carry through
+    authoritative metadata supplied by Data Repository. They are absent on
+    entries created before that change; readers must treat them as optional.
+    """
 
     slug: str
     source_uri: str
@@ -45,6 +51,11 @@ class ManifestEntry(BaseModel):
     size_bytes: int
     digest: Optional[str] = None
     downloaded_at: str
+    category: Optional[str] = None
+    name: Optional[str] = None
+    version: Optional[str] = None
+    checksum: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 class Manifest(BaseModel):
@@ -304,6 +315,11 @@ def pull_model(
     model_id: Optional[str] = None,
     digest: Optional[str] = None,
     size_bytes: Optional[int] = None,
+    category: Optional[str] = None,
+    name: Optional[str] = None,
+    version: Optional[str] = None,
+    checksum: Optional[str] = None,
+    metadata: Optional[dict] = None,
 ) -> dict:
     """Download a model from Harbor or HuggingFace Hub and record it in the manifest.
 
@@ -469,6 +485,11 @@ def pull_model(
             size_bytes=size_bytes,
             digest=digest,
             downloaded_at=datetime.now(timezone.utc).isoformat(),
+            category=category,
+            name=name,
+            version=version,
+            checksum=checksum,
+            metadata=metadata,
         )
         with _manifest_lock:
             add_manifest_entry(entry)
