@@ -117,8 +117,8 @@
         "All tests pass"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "All unit tests verified passing (242/242). test_job_models.py: enum values, StepDefinition/JobDefinition defaults and construction, JobState/StepState serialization and JSON round-trip (19 tests). test_workspace.py: validate_job_id valid/invalid parametrized, check_disk_space pass/fail/edge cases, create_workspace structure/permissions/job.json/training.json, delete_workspace (34 tests). test_job_store.py: add/get/update/remove/get_all, update_step, thread-safety via concurrent threads, singleton (22 tests). test_job_executor.py: 3-step success, fail-fast, cancellation, disk error, container start failure (5 tests). test_job_step_executor.py: successful step, nonzero exit, ContainerStartError, remove always called, active_containers cleared, build_environment workspace paths/credentials/step var override, is_preparation_step=True and False forwarded to create_container (9 tests). test_docker_service.py additions: preparation step models+data rw, consumption step models+data ro, output+config always rw (3 tests). test_cleanup_loop.py: expired removal, retention window, running-job skip, missing finished_at skip, empty workspace path, CancelledError exit, multi-cycle (7 tests)."
     }
   ]
 }
