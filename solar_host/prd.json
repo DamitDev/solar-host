@@ -101,8 +101,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added cleanup_loop coroutine to executor.py (scans terminal jobs past finished_at+retention_hours, delete_workspace + store.remove). Added JobExecutor and cleanup_loop to jobs/__init__.py re-exports. Wired DockerService, JobExecutor, and cleanup_loop into main.py lifespan (Docker unavailable degrades gracefully; active jobs cancelled on shutdown; references stored on app.state). 7 new tests in tests/test_cleanup_loop.py cover expired removal, retention window, running-job skip, missing finished_at skip, empty workspace path, clean CancelledError exit, and multi-cycle iteration. 242/242 total tests pass."
     },
     {
       "id": "US-007",

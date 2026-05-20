@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,13 +15,14 @@ from solar_host.jobs.step_executor import JobStepExecutor
 from solar_host.jobs.workspace import (
     check_disk_space,
     create_workspace,
+    delete_workspace,
     validate_job_id,
 )
 
 if TYPE_CHECKING:
     from solar_host.config import Settings
     from solar_host.docker.service import DockerService
-    from solar_host.jobs.models import JobDefinition, StepDefinition
+    from solar_host.jobs.models import JobDefinition
     from solar_host.jobs.store import JobStore
 
 logger = logging.getLogger(__name__)
@@ -228,3 +229,40 @@ class JobExecutor:
         for idx in range(from_index, len(job.steps)):
             if job.steps[idx].status == StepStatus.pending:
                 self._store.update_step(job_id, idx, status=StepStatus.cancelled)
+
+
+_TERMINAL_STATUSES = {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}
+
+
+async def cleanup_loop(store: JobStore, poll_interval_s: float = 300.0) -> None:
+    """Background coroutine that periodically purges expired terminal jobs.
+
+    A terminal job (completed / failed / cancelled) is expired when its
+    ``finished_at + retention_hours`` is in the past.  For each expired job
+    the workspace directory is deleted and the entry is removed from *store*.
+    """
+    while True:
+        try:
+            await asyncio.sleep(poll_interval_s)
+        except asyncio.CancelledError:
+            break
+
+        now = datetime.now(UTC)
+        for job in store.get_all():
+            if job.status not in _TERMINAL_STATUSES:
+                continue
+            if job.finished_at is None:
+                continue
+            expires_at = job.finished_at + timedelta(hours=job.retention_hours)
+            if now < expires_at:
+                continue
+
+            logger.info(
+                "Retention cleanup: removing expired job %r (finished_at=%s, retention=%sh)",
+                job.job_id,
+                job.finished_at.isoformat(),
+                job.retention_hours,
+            )
+            if job.workspace_path:
+                delete_workspace(Path(job.workspace_path))
+            store.remove(job.job_id)

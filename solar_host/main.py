@@ -13,6 +13,7 @@ from solar_host.models_manager import ensure_models_dir, get_models_dir
 from solar_host.process_manager import process_manager
 from solar_host.routes import instances, models, websockets
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
+from solar_host.jobs import JobExecutor, cleanup_loop, job_store
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,29 @@ async def lifespan(app: FastAPI):
     ensure_models_dir()
     logger.info("Models directory: %s", get_models_dir())
 
+    # --- Job execution layer ---
+    from solar_host.docker.service import DockerService
+    from solar_host.docker.errors import DaemonUnavailableError
+
+    docker_service: DockerService | None = None
+    job_executor: JobExecutor | None = None
+    cleanup_task: asyncio.Task | None = None
+    try:
+        docker_service = DockerService(settings)
+        job_executor = JobExecutor(docker_service, job_store, settings)
+        app.state.docker_service = docker_service
+        app.state.job_executor = job_executor
+        app.state.job_store = job_store
+        cleanup_task = asyncio.create_task(cleanup_loop(job_store))
+        logger.info("Docker service and job executor initialised")
+    except DaemonUnavailableError:
+        logger.warning(
+            "Docker daemon unavailable — job executor disabled (training routes will return 503)"
+        )
+        app.state.docker_service = None
+        app.state.job_executor = None
+        app.state.job_store = job_store
+
     clients = init_clients(settings)
     health_task = None
     watchdog_task = None
@@ -68,6 +92,23 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down Solar Host...")
+
+    # Stop active jobs and cancel the retention cleanup task.
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+    if job_executor is not None:
+        for job in job_store.get_all():
+            from solar_host.jobs.models import JobStatus as _JobStatus
+            if job.status == _JobStatus.running:
+                try:
+                    await job_executor.cancel_job(job.job_id)
+                except Exception:
+                    logger.warning("Error cancelling job %r during shutdown", job.job_id)
 
     if health_task:
         health_task.cancel()

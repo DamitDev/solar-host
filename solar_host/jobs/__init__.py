@@ -6,6 +6,7 @@ from solar_host.jobs.errors import (
     JobsError,
     WorkspaceError,
 )
+from solar_host.jobs.executor import JobExecutor, cleanup_loop
 from solar_host.jobs.models import (
     JobDefinition,
     JobState,
@@ -22,6 +23,9 @@ __all__ = [
     "WorkspaceError",
     "InvalidJobIdError",
     "InsufficientDiskError",
+    # executor
+    "JobExecutor",
+    "cleanup_loop",
     # models
     "JobStatus",
     "StepStatus",
