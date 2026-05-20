@@ -17,8 +17,8 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented solar_host/jobs/models.py (enums, StepDefinition, JobDefinition, StepState, JobState) and solar_host/jobs/errors.py (JobsError, WorkspaceError, InvalidJobIdError, InsufficientDiskError). 19/19 tests pass."
     },
     {
       "id": "US-002",
