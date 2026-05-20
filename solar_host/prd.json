@@ -65,8 +65,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added is_preparation_step: bool = False to DockerService.create_container. Replaced _WORKSPACE_MOUNTS static matrix with _TOGGLED_MOUNTS (models, data) and _ALWAYS_RW_MOUNTS (output, config). When is_preparation_step=True models/ and data/ are rw; when False (default) both are ro. HF cache mount unchanged. 3 new tests added (preparation rw, consumption ro, output/config always rw). 220/220 total tests pass."
     },
     {
       "id": "US-005",

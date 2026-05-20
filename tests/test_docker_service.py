@@ -125,9 +125,71 @@ def test_create_container_bind_mounts():
     assert "/workspace/config" in container_paths
     assert "/workspace/.cache/huggingface" in container_paths
 
-    # data mount must be read-only
+    # default (consumption) step: models and data must be read-only
+    models_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/models")
     data_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/data")
+    assert models_entry["mode"] == "ro"
     assert data_entry["mode"] == "ro"
+
+
+def _volumes_for(client: MagicMock, svc: DockerService, **kwargs: object) -> dict:
+    """Helper: call create_container and return the volumes kwarg."""
+    svc.create_container(
+        image="alpine:3.18",
+        job_id="job-1",
+        step_name="train",
+        environment={},
+        **kwargs,  # type: ignore[arg-type]
+    )
+    return client.containers.create.call_args[1]["volumes"]
+
+
+def test_create_container_preparation_step_models_and_data_rw():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.id = "abc123"
+    client.containers.create.return_value = mock_container
+
+    svc = _make_service(client)
+    volumes = _volumes_for(client, svc, is_preparation_step=True)
+
+    models_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/models")
+    data_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/data")
+    assert models_entry["mode"] == "rw"
+    assert data_entry["mode"] == "rw"
+
+
+def test_create_container_consumption_step_models_and_data_ro():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.id = "abc123"
+    client.containers.create.return_value = mock_container
+
+    svc = _make_service(client)
+    volumes = _volumes_for(client, svc, is_preparation_step=False)
+
+    models_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/models")
+    data_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/data")
+    assert models_entry["mode"] == "ro"
+    assert data_entry["mode"] == "ro"
+
+
+def test_create_container_output_and_config_always_rw():
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.id = "abc123"
+    client.containers.create.return_value = mock_container
+
+    svc = _make_service(client)
+    for prep_flag in (True, False):
+        client.containers.create.reset_mock()
+        client.containers.create.return_value = mock_container
+        volumes = _volumes_for(client, svc, is_preparation_step=prep_flag)
+
+        output_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/output")
+        config_entry = next(v for v in volumes.values() if v["bind"] == "/workspace/config")
+        assert output_entry["mode"] == "rw", f"output not rw when is_preparation_step={prep_flag}"
+        assert config_entry["mode"] == "rw", f"config not rw when is_preparation_step={prep_flag}"
 
 
 def test_create_container_user_set():

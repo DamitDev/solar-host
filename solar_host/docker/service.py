@@ -20,12 +20,16 @@ from solar_host.docker.errors import (
 
 logger = logging.getLogger(__name__)
 
-_WORKSPACE_MOUNTS: list[tuple[str, str, bool]] = [
-    # (sub-dir under job_dir, container path, read_only)
-    ("models", "/workspace/models", False),
-    ("data", "/workspace/data", True),
-    ("output", "/workspace/output", False),
-    ("config", "/workspace/config", False),
+# Mounts whose read/write mode depends on is_preparation_step.
+_TOGGLED_MOUNTS: list[tuple[str, str]] = [
+    ("models", "/workspace/models"),
+    ("data", "/workspace/data"),
+]
+
+# Mounts that are always read-write regardless of step type.
+_ALWAYS_RW_MOUNTS: list[tuple[str, str]] = [
+    ("output", "/workspace/output"),
+    ("config", "/workspace/config"),
 ]
 
 
@@ -80,18 +84,29 @@ class DockerService:
         step_name: str,
         environment: dict[str, str],
         gpu: bool = False,
+        is_preparation_step: bool = False,
     ) -> str:
-        """Create (but don't start) a container and return its ID."""
+        """Create (but don't start) a container and return its ID.
+
+        Args:
+            is_preparation_step: When True, ``models/`` and ``data/`` are
+                mounted read-write (the step is allowed to populate them).
+                When False (default), those directories are read-only.
+                ``output/`` and ``config/`` are always read-write.
+        """
         s = self._settings
         job_path = Path(s.jobs_dir) / job_id
 
         volumes: dict[str, dict[str, str]] = {}
-        for sub_dir, container_path, read_only in _WORKSPACE_MOUNTS:
+
+        toggled_mode = "rw" if is_preparation_step else "ro"
+        for sub_dir, container_path in _TOGGLED_MOUNTS:
             host_path = str((job_path / sub_dir).resolve())
-            volumes[host_path] = {
-                "bind": container_path,
-                "mode": "ro" if read_only else "rw",
-            }
+            volumes[host_path] = {"bind": container_path, "mode": toggled_mode}
+
+        for sub_dir, container_path in _ALWAYS_RW_MOUNTS:
+            host_path = str((job_path / sub_dir).resolve())
+            volumes[host_path] = {"bind": container_path, "mode": "rw"}
 
         hf_cache_host = str(Path(s.hf_cache_dir).resolve())
         volumes[hf_cache_host] = {
