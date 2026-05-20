@@ -143,7 +143,9 @@ def test_update_step_multiple_fields():
     store = JobStore()
     store.add(_make_job_with_steps("steps-2"))
     now = datetime.now(UTC)
-    store.update_step("steps-2", 0, status=StepStatus.completed, started_at=now, exit_code=0)
+    store.update_step(
+        "steps-2", 0, status=StepStatus.completed, started_at=now, exit_code=0
+    )
     step = store.get("steps-2").steps[0]  # type: ignore[union-attr]
     assert step.status == StepStatus.completed
     assert step.started_at == now
@@ -263,10 +265,9 @@ def test_concurrent_mixed_operations():
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
-    threads = (
-        [threading.Thread(target=adder, args=(i,)) for i in range(20)]
-        + [threading.Thread(target=reader) for _ in range(20)]
-    )
+    threads = [threading.Thread(target=adder, args=(i,)) for i in range(20)] + [
+        threading.Thread(target=reader) for _ in range(20)
+    ]
     for t in threads:
         t.start()
     for t in threads:

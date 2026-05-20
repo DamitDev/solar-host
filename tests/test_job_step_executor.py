@@ -16,7 +16,6 @@ import pytest
 from solar_host.config import Settings
 from solar_host.docker.errors import ContainerNonZeroExitError, ContainerStartError
 from solar_host.jobs.models import (
-    JobDefinition,
     JobState,
     JobStatus,
     StepDefinition,

@@ -58,7 +58,9 @@ def _make_step(
     )
 
 
-def _make_job(steps: list[StepDefinition], job_id: str = "test-job-001") -> JobDefinition:
+def _make_job(
+    steps: list[StepDefinition], job_id: str = "test-job-001"
+) -> JobDefinition:
     return JobDefinition(job_id=job_id, name="Test Job", steps=steps)
 
 
@@ -98,7 +100,12 @@ async def test_three_step_success() -> None:
     job_def = _make_job([_make_step("a"), _make_step("b"), _make_step("c")])
     ds.create_container.side_effect = ["c1", "c2", "c3"]
 
-    with _WORKSPACE_PATCHES[0], _WORKSPACE_PATCHES[1], _WORKSPACE_PATCHES[2], _WORKSPACE_PATCHES[3]:
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+    ):
         result = await executor.run_job(job_def)
 
     assert result.status == JobStatus.completed
@@ -123,7 +130,12 @@ async def test_fail_fast_on_step_failure() -> None:
         0,
     ]
 
-    with _WORKSPACE_PATCHES[0], _WORKSPACE_PATCHES[1], _WORKSPACE_PATCHES[2], _WORKSPACE_PATCHES[3]:
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+    ):
         result = await executor.run_job(job_def)
 
     assert result.status == JobStatus.failed
@@ -202,7 +214,12 @@ async def test_container_start_failure_fails_job() -> None:
     job_def = _make_job([_make_step("a"), _make_step("b")])
     ds.create_container.side_effect = ContainerStartError("solar-job-…-a", "API error")
 
-    with _WORKSPACE_PATCHES[0], _WORKSPACE_PATCHES[1], _WORKSPACE_PATCHES[2], _WORKSPACE_PATCHES[3]:
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+    ):
         result = await executor.run_job(job_def)
 
     assert result.status == JobStatus.failed

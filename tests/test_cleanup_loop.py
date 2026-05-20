@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -61,8 +60,12 @@ async def test_cleanup_removes_expired_terminal_jobs() -> None:
     store.add(_make_job("j3", JobStatus.cancelled, _expired_at(), retention_hours=1.0))
 
     # sleep: first call succeeds (loop body runs), second raises CancelledError (loop exits).
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete, \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete,
+        patch(
+            f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
         await cleanup_loop(store, poll_interval_s=0)
 
@@ -78,8 +81,12 @@ async def test_cleanup_keeps_non_expired_jobs() -> None:
     store = JobStore()
     store.add(_make_job("j1", JobStatus.completed, _recent(), retention_hours=24.0))
 
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete, \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete,
+        patch(
+            f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
         await cleanup_loop(store, poll_interval_s=0)
 
@@ -93,8 +100,12 @@ async def test_cleanup_skips_running_jobs() -> None:
     store = JobStore()
     store.add(_make_job("j1", JobStatus.running, _expired_at(), retention_hours=0.0))
 
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete, \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete,
+        patch(
+            f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
         await cleanup_loop(store, poll_interval_s=0)
 
@@ -106,10 +117,16 @@ async def test_cleanup_skips_running_jobs() -> None:
 async def test_cleanup_skips_jobs_without_finished_at() -> None:
     """Terminal jobs with no finished_at are skipped (defensive)."""
     store = JobStore()
-    store.add(_make_job("j1", JobStatus.completed, finished_at=None, retention_hours=0.0))
+    store.add(
+        _make_job("j1", JobStatus.completed, finished_at=None, retention_hours=0.0)
+    )
 
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete, \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete,
+        patch(
+            f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
         await cleanup_loop(store, poll_interval_s=0)
 
@@ -123,8 +140,12 @@ async def test_cleanup_skips_workspace_delete_when_empty_path() -> None:
     store = JobStore()
     store.add(_make_job("j1", JobStatus.completed, _expired_at(), workspace_path=""))
 
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete, \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace") as mock_delete,
+        patch(
+            f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
         await cleanup_loop(store, poll_interval_s=0)
 
@@ -137,7 +158,9 @@ async def test_cleanup_exits_cleanly_on_cancelled_error() -> None:
     """The loop exits without propagating CancelledError when cancelled during sleep."""
     store = JobStore()
 
-    with patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch(
+        f"{_EXECUTOR_MODULE}.asyncio.sleep", new_callable=AsyncMock
+    ) as mock_sleep:
         mock_sleep.side_effect = asyncio.CancelledError()
         await cleanup_loop(store, poll_interval_s=0)  # must return, not raise
 
@@ -156,8 +179,10 @@ async def test_cleanup_runs_multiple_cycles() -> None:
         if call_count >= 3:
             raise asyncio.CancelledError()
 
-    with patch(f"{_EXECUTOR_MODULE}.delete_workspace"), \
-         patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", side_effect=controlled_sleep):
+    with (
+        patch(f"{_EXECUTOR_MODULE}.delete_workspace"),
+        patch(f"{_EXECUTOR_MODULE}.asyncio.sleep", side_effect=controlled_sleep),
+    ):
         await cleanup_loop(store, poll_interval_s=0)
 
     # Loop ran 3 sleep calls total; body executed twice (calls 1 and 2 succeeded).

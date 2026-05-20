@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,10 +72,10 @@ def test_validate_job_id_valid(valid_id: str):
         "",
         "job/with/slash",
         "job/../traversal",
-        "job id",       # space
-        "job@domain",   # @
-        "job!bad",      # !
-        "job:bad",      # :
+        "job id",  # space
+        "job@domain",  # @
+        "job!bad",  # !
+        "job:bad",  # :
         "../escape",
         "..leading",
     ],
@@ -149,10 +148,16 @@ def test_build_job_json_required_keys():
     job = _make_job()
     data = build_job_json(job)
     required = {
-        "job_id", "name", "created_at", "pipeline",
-        "base_model_uri", "training_data_uri",
-        "model_selection", "deployment",
-        "retention_hours", "steps",
+        "job_id",
+        "name",
+        "created_at",
+        "pipeline",
+        "base_model_uri",
+        "training_data_uri",
+        "model_selection",
+        "deployment",
+        "retention_hours",
+        "steps",
     }
     assert required.issubset(data.keys())
 
