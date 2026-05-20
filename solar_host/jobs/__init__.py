@@ -14,6 +14,7 @@ from solar_host.jobs.models import (
     StepState,
     StepStatus,
 )
+from solar_host.jobs.store import JobStore, job_store
 
 __all__ = [
     # errors
@@ -28,4 +29,7 @@ __all__ = [
     "JobDefinition",
     "StepState",
     "JobState",
+    # store
+    "JobStore",
+    "job_store",
 ]

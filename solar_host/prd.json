@@ -48,8 +48,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented solar_host/jobs/store.py: JobStore with threading.Lock, add/get/get_all/update/update_step/remove methods, and module-level job_store singleton. 22/22 new tests in tests/test_job_store.py; 217/217 total pass."
     },
     {
       "id": "US-004",
