@@ -34,8 +34,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented solar_host/jobs/workspace.py: validate_job_id (regex guard + slash/dotdot checks), check_disk_space (shutil.disk_usage), create_workspace (subdirs with 0o755 + chown, job.json, optional training.json), build_job_json (S-021 5.2 fields), delete_workspace (swallows missing). 34 new tests in tests/test_workspace.py; 195/195 total pass."
     },
     {
       "id": "US-003",
