@@ -10,7 +10,6 @@ import pytest
 from solar_host.jobs.models import JobState, JobStatus, StepState, StepStatus
 from solar_host.jobs.store import JobStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
