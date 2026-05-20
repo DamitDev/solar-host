@@ -82,7 +82,9 @@ class JobExecutor:
         )
         check_disk_space(Path(self._settings.jobs_dir), min_gb)
 
-        workspace_path = await asyncio.to_thread(create_workspace, job_def, self._settings)
+        workspace_path = await asyncio.to_thread(
+            create_workspace, job_def, self._settings
+        )
 
         now = datetime.now(UTC)
         self._store.add(
@@ -105,7 +107,9 @@ class JobExecutor:
 
         failed = False
         try:
-            failed = await self._run_steps(job_def, workspace_path, min_gb, cancel_event)
+            failed = await self._run_steps(
+                job_def, workspace_path, min_gb, cancel_event
+            )
         except InsufficientDiskError:
             raise
         except Exception as exc:

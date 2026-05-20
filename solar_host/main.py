@@ -104,11 +104,14 @@ async def lifespan(app: FastAPI):
     if job_executor is not None:
         for job in job_store.get_all():
             from solar_host.jobs.models import JobStatus as _JobStatus
+
             if job.status == _JobStatus.running:
                 try:
                     await job_executor.cancel_job(job.job_id)
                 except Exception:
-                    logger.warning("Error cancelling job %r during shutdown", job.job_id)
+                    logger.warning(
+                        "Error cancelling job %r during shutdown", job.job_id
+                    )
 
     if health_task:
         health_task.cancel()

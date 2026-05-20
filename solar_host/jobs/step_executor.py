@@ -60,7 +60,9 @@ class JobStepExecutor:
             started_at=step_start,
         )
 
-        environment = self.build_environment(job_id, step_index, step_def, workspace_path)
+        environment = self.build_environment(
+            job_id, step_index, step_def, workspace_path
+        )
 
         container_id: str | None = None
         try:

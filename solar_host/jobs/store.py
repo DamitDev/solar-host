@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from solar_host.jobs.models import JobState, StepState
+from solar_host.jobs.models import JobState
 
 
 class JobStore:

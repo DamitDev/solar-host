@@ -54,9 +54,7 @@ def check_disk_space(jobs_dir: Path, min_free_gb: float) -> None:
     usage = shutil.disk_usage(jobs_dir)
     available_gb = usage.free / (1024**3)
     if available_gb < min_free_gb:
-        raise InsufficientDiskError(
-            required_gb=min_free_gb, available_gb=available_gb
-        )
+        raise InsufficientDiskError(required_gb=min_free_gb, available_gb=available_gb)
 
 
 def build_job_json(job_def: JobDefinition) -> dict:  # type: ignore[type-arg]
