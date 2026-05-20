@@ -1,0 +1,124 @@
+{
+  "project": "SolarHost",
+  "branchName": "feature/S-023",
+  "description": "S-023: Sequential Docker Step Executor — job data models, workspace manager, in-memory job store, async executor with fail-fast and cancellation, background retention cleanup, and unit tests.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Job data models",
+      "description": "As a developer, I need Pydantic models and enums for job definitions and runtime state so the executor can validate input and track progress.",
+      "acceptanceCriteria": [
+        "Add solar_host/jobs/models.py with JobStatus enum: pending, running, completed, failed, cancelled",
+        "Add StepStatus enum: pending, running, completed, failed, cancelled",
+        "Add StepDefinition: name, image, environment (dict[str, str]), gpu (bool, default False), is_preparation_step (bool, default False)",
+        "Add JobDefinition: job_id, name, steps, retention_hours (default 24), min_free_disk_gb (default from settings), base_model_uri, training_data_uri, training_config, model_selection, deployment (all optional except job_id, name, steps)",
+        "Add StepState and JobState runtime models with fields per plan (container_id, timestamps, duration_s, exit_code, error_message, current_step_index, workspace_path, etc.)",
+        "Add solar_host/jobs/errors.py with InsufficientDiskError, InvalidJobIdError, WorkspaceError",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Workspace manager",
+      "description": "As a developer, I need filesystem operations for the S-021 job workspace so steps share a correctly laid out ephemeral directory.",
+      "acceptanceCriteria": [
+        "Add solar_host/jobs/workspace.py with validate_job_id: reject /, .., and non-filesystem-safe characters; raise ValueError on invalid input",
+        "Add check_disk_space(jobs_dir, min_free_gb) using shutil.disk_usage; raise InsufficientDiskError when below threshold",
+        "Add create_workspace(job_def, settings): create JOBS_DIR/<job-id>/{models,data,output,config,logs} with 0o755 owned by CONTAINER_UID:CONTAINER_GID",
+        "Write job.json into config/; write training.json when job_def.training_config is provided",
+        "Add build_job_json(job_def) per S-021 Section 5.2 (job_id, name, created_at, pipeline, URIs, model_selection, deployment, retention_hours, empty steps object)",
+        "Add delete_workspace(workspace_path): shutil.rmtree; log errors but do not raise on missing dirs",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "In-memory job store",
+      "description": "As a developer, I need a thread-safe in-memory job store so GET /jobs/{id} (S-027) can report active and recent job state without disk persistence.",
+      "acceptanceCriteria": [
+        "Add solar_host/jobs/store.py with JobStore class guarded by threading.Lock",
+        "Implement add, get, get_all, update (partial JobState fields), update_step (partial StepState by index), remove",
+        "Expose module-level singleton job_store (same pattern as config_manager in config.py)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "DockerService models/data write toggle",
+      "description": "As a developer, I need create_container to toggle models/ and data/ between read-write (preparation) and read-only (consumption) per S-021.",
+      "acceptanceCriteria": [
+        "Add is_preparation_step: bool = False to DockerService.create_container in solar_host/docker/service.py",
+        "When is_preparation_step=True: bind-mount models/ and data/ as read-write",
+        "When is_preparation_step=False (default): bind-mount models/ and data/ as read-only",
+        "output/ and config/ remain read-write in both modes; HF cache mount unchanged",
+        "Replace hardcoded _WORKSPACE_MOUNTS matrix with logic driven by is_preparation_step",
+        "Update tests/test_docker_service.py: RW for both models and data when True; RO when False or omitted; output/config always rw",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Async job executor",
+      "description": "As a developer, I need an async JobExecutor that runs Docker steps sequentially with fail-fast, log capture, and cancellation.",
+      "acceptanceCriteria": [
+        "Add solar_host/jobs/executor.py with JobExecutor(docker_service, store, settings)",
+        "run_job: validate job ID, check disk, create workspace, register JobState(running), loop steps sequentially, return final JobState",
+        "Per-step _run_step: cancellation check, pre-step disk check, build env (workspace paths S-021 4.1, credentials from Settings 4.2, step.environment 4.3, STEP_NAME, STEP_INDEX)",
+        "create_container/start_container via asyncio.to_thread; pass is_preparation_step from step definition",
+        "Background thread streams logs to JOBS_DIR/<job-id>/logs/<step_name>.log while wait_container blocks",
+        "On ContainerNonZeroExitError: mark step failed, set error_message from stderr, fail-fast skip remaining steps",
+        "On success: mark step completed; always remove_container(force=True)",
+        "cancel_job: per-job asyncio.Event; stop active container; mark remaining steps cancelled",
+        "Environment includes JOB_ID, WORKSPACE_* paths, JOB_CONFIG, HARBOR_*, HF_TOKEN, HF_HOME; pass DATA_REPOSITORY_URL and WANDB_API_KEY from step env if present",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Background cleanup and app integration",
+      "description": "As a developer, I need retention cleanup and lifespan wiring so workspaces expire and the executor is available to downstream routes.",
+      "acceptanceCriteria": [
+        "Add async cleanup_loop(store, poll_interval_s=300): scan terminal jobs (completed, failed, cancelled) past finished_at + retention_hours; delete_workspace and remove from store",
+        "Wire in solar_host/main.py lifespan: instantiate DockerService, JobExecutor, start cleanup_loop as background task",
+        "Store references on app.state for future S-027 routes",
+        "On shutdown: cancel cleanup task; stop active jobs gracefully",
+        "Add solar_host/jobs/__init__.py re-exporting JobDefinition, StepDefinition, JobStatus, StepStatus, JobState, StepState, JobExecutor, JobStore, job_store",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Unit tests for jobs package and executor",
+      "description": "As a developer, I need comprehensive unit tests so job models, workspace, store, executor, and Docker mount modes behave correctly.",
+      "acceptanceCriteria": [
+        "Add tests/test_job_models.py: JobDefinition/StepDefinition construction and defaults; enum values; JobState/StepState serialization",
+        "Add tests/test_workspace.py: validate_job_id valid/invalid; check_disk_space pass/fail with mocked disk_usage; create_workspace structure, permissions, job.json and training.json; delete_workspace",
+        "Add tests/test_job_store.py: add/get/update/remove/get_all; update_step; concurrent thread safety",
+        "Add tests/test_job_executor.py: 3-step success; mid-pipeline fail-fast; cancellation during step 2; InsufficientDiskError; container start failure; environment building; is_preparation_step True vs False on create_container",
+        "Extend tests/test_docker_service.py per US-004 mount assertions",
+        "All tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
