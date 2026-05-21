@@ -589,3 +589,73 @@ def test_create_container_gpu_raises_when_toolkit_missing():
     svc = _make_service(client)
     with pytest.raises(GpuUnavailableError):
         svc.create_container("alpine", "job-1", "train", {}, gpu=GpuOptions(count=1))
+
+
+# ---------------------------------------------------------------------------
+# stream_logs — demux
+# ---------------------------------------------------------------------------
+
+
+def test_stream_logs_demux_yields_stream_tuples():
+    """demux=True yields (stream, chunk) tuples for stdout and stderr."""
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter(
+        [
+            (b"stdout line\n", None),
+            (None, b"stderr line\n"),
+            (b"more stdout\n", b"more stderr\n"),
+        ]
+    )
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    results = list(svc.stream_logs("abc123", follow=True, tail=0, demux=True))
+
+    assert ("stdout", "stdout line\n") in results
+    assert ("stderr", "stderr line\n") in results
+    assert ("stdout", "more stdout\n") in results
+    assert ("stderr", "more stderr\n") in results
+
+
+def test_stream_logs_demux_skips_none_chunks():
+    """When one of the demux tuple elements is None it is not yielded."""
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter(
+        [
+            (b"only stdout\n", None),
+            (None, None),  # both None — nothing should be yielded
+        ]
+    )
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    results = list(svc.stream_logs("abc123", follow=True, tail=0, demux=True))
+    assert results == [("stdout", "only stdout\n")]
+
+
+def test_stream_logs_demux_false_preserves_plain_str_output():
+    """demux=False (default) still yields plain strings — backward-compat."""
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter([b"plain\n"])
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    results = list(svc.stream_logs("abc123"))
+    assert results == ["plain\n"]
+
+
+def test_stream_logs_demux_passes_demux_param_to_docker():
+    """demux=True passes demux=True to docker-py container.logs()."""
+    client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = iter([])
+    client.containers.get.return_value = mock_container
+
+    svc = _make_service(client)
+    list(svc.stream_logs("abc123", follow=True, tail=0, demux=True))
+
+    kwargs = mock_container.logs.call_args[1]
+    assert kwargs.get("demux") is True

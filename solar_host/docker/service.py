@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Literal, Iterator, Union, overload
 
 import docker
 import docker.errors as _docker_errors
@@ -215,31 +215,74 @@ class DockerService:
         except _docker_errors.NotFound as exc:
             raise ContainerStartError(container_id, f"Not found: {exc}") from exc
 
+    @overload
     def stream_logs(
-        self, container_id: str, follow: bool = True, tail: int = 50
-    ) -> Iterator[str]:
-        """Yield decoded log lines from the container.
+        self,
+        container_id: str,
+        follow: bool,
+        tail: int,
+        demux: Literal[False],
+    ) -> Iterator[str]: ...
+
+    @overload
+    def stream_logs(
+        self,
+        container_id: str,
+        follow: bool,
+        tail: int,
+        demux: Literal[True],
+    ) -> Iterator[tuple[str, str]]: ...
+
+    def stream_logs(
+        self,
+        container_id: str,
+        follow: bool = True,
+        tail: int = 50,
+        demux: bool = False,
+    ) -> Union[Iterator[str], Iterator[tuple[str, str]]]:
+        """Yield decoded log chunks from the container.
 
         Args:
             container_id: ID of the target container.
             follow: Keep streaming until the container stops.
             tail: Number of lines to show from the end of existing logs
                 before streaming new output. Pass ``0`` for all lines.
+            demux: When ``True`` yield ``(stream, chunk)`` tuples where
+                *stream* is ``"stdout"`` or ``"stderr"``.  When ``False``
+                (default) yield plain ``str`` chunks (merged stdout+stderr),
+                preserving backward compatibility.
         """
         try:
             container = self._client.containers.get(container_id)
-            log_stream = container.logs(
-                stream=True,
-                follow=follow,
-                stdout=True,
-                stderr=True,
-                tail=tail if tail > 0 else "all",
-            )
-            for chunk in log_stream:
-                if isinstance(chunk, bytes):
-                    yield chunk.decode("utf-8", errors="replace")
-                else:
-                    yield chunk  # type: ignore[misc]
+            tail_arg: Union[int, str] = tail if tail > 0 else "all"
+
+            if demux:
+                log_stream = container.logs(
+                    stream=True,
+                    follow=follow,
+                    stdout=True,
+                    stderr=True,
+                    tail=tail_arg,
+                    demux=True,
+                )
+                for stdout_chunk, stderr_chunk in log_stream:
+                    if stdout_chunk:
+                        yield ("stdout", stdout_chunk.decode("utf-8", errors="replace"))
+                    if stderr_chunk:
+                        yield ("stderr", stderr_chunk.decode("utf-8", errors="replace"))
+            else:
+                log_stream = container.logs(
+                    stream=True,
+                    follow=follow,
+                    stdout=True,
+                    stderr=True,
+                    tail=tail_arg,
+                )
+                for chunk in log_stream:
+                    if isinstance(chunk, bytes):
+                        yield chunk.decode("utf-8", errors="replace")
+                    else:
+                        yield chunk  # type: ignore[misc]
         except _docker_errors.NotFound as exc:
             raise ContainerStartError(container_id, f"Not found: {exc}") from exc
 

@@ -13,7 +13,7 @@
         "Typecheck and existing tests pass"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -35,7 +35,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Mirror ProcessManager deque + queue + flush pattern; separate module, not ProcessManager."
     },
     {
@@ -51,7 +51,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -66,7 +66,7 @@
         "pytest tests/test_docker_service.py passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "S-021 requires combined output in logs/<step_name>.log; file writer concatenates both streams in arrival order."
     },
     {
@@ -85,7 +85,7 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -100,7 +100,7 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -114,7 +114,7 @@
         "Lint/format per repo CI workflows passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -129,7 +129,7 @@
         "Document reconnect behavior: emit no-ops when disconnected; jobs unaffected"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": ""
     }
   ]

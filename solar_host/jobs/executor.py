@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from solar_host.jobs.errors import InsufficientDiskError
 from solar_host.jobs.models import JobState, JobStatus, StepState, StepStatus
 from solar_host.jobs.step_executor import JobStepExecutor
+from solar_host.jobs.step_log_buffer import step_log_buffer
 from solar_host.jobs.workspace import (
     check_disk_space,
     create_workspace,
@@ -125,6 +126,7 @@ class JobExecutor:
             with self._lock:
                 self._cancel_events.pop(job_def.job_id, None)
                 self._active_containers.pop(job_def.job_id, None)
+            step_log_buffer.remove(job_def.job_id)
 
         self._finalise_job(job_def.job_id, failed, cancel_event)
 
@@ -269,4 +271,5 @@ async def cleanup_loop(store: JobStore, poll_interval_s: float = 300.0) -> None:
             )
             if job.workspace_path:
                 delete_workspace(Path(job.workspace_path))
+            step_log_buffer.remove(job.job_id)
             store.remove(job.job_id)

@@ -85,7 +85,7 @@ _WORKSPACE_PATCHES = (
     patch(f"{_EXECUTOR_MODULE}.validate_job_id"),
     patch(f"{_EXECUTOR_MODULE}.check_disk_space"),
     patch(f"{_EXECUTOR_MODULE}.create_workspace", return_value=_WORKSPACE),
-    patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"),
+    patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
 )
 
 

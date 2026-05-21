@@ -14,6 +14,7 @@ from solar_host.process_manager import process_manager
 from solar_host.routes import instances, models, websockets
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 from solar_host.jobs import JobExecutor, cleanup_loop, job_store
+from solar_host.jobs.step_log_buffer import step_log_flush_loop
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,13 @@ async def lifespan(app: FastAPI):
     clients = init_clients(settings)
     health_task = None
     watchdog_task = None
+    step_log_task: asyncio.Task | None = None
     if clients:
         for client in clients:
             await client.start()
         loop = asyncio.get_running_loop()
         process_manager.ensure_flush_loop(loop)
+        step_log_task = asyncio.create_task(step_log_flush_loop())
         health_task = asyncio.create_task(health_report_loop())
         logger.info(
             "Solar Control WebSocket client(s) started (%d connection(s))", len(clients)
@@ -112,6 +115,13 @@ async def lifespan(app: FastAPI):
                     logger.warning(
                         "Error cancelling job %r during shutdown", job.job_id
                     )
+
+    if step_log_task:
+        step_log_task.cancel()
+        try:
+            await step_log_task
+        except asyncio.CancelledError:
+            pass
 
     if health_task:
         health_task.cancel()

@@ -321,6 +321,10 @@ class SolarControlClient:
         """Send a batch of log messages to solar-control in a single emit."""
         await self._emit("log_batch", {"entries": entries})
 
+    async def send_step_log_batch(self, entries: List[dict]) -> None:
+        """Send a batch of step log lines to solar-control in a single emit."""
+        await self._emit("step_log", {"entries": entries})
+
     async def send_instance_state_batch(self, entries: List[dict]):
         """Send a batch of instance state updates to solar-control."""
         await self._emit("instance_state_batch", {"entries": entries})
@@ -478,6 +482,13 @@ async def broadcast_log_batch(entries: List[dict]):
     client = get_client()
     if client:
         await client.send_log_batch(entries)
+
+
+async def broadcast_step_log_batch(entries: List[dict]) -> None:
+    """Send a batch of step log lines to solar-control."""
+    client = get_client()
+    if client:
+        await client.send_step_log_batch(entries)
 
 
 async def broadcast_instance_state_batch(entries: List[dict]):

@@ -566,6 +566,81 @@ To verify the NVIDIA Container Toolkit is working on a host without running a fu
 docker run --rm --gpus '"device=0"' nvidia/cuda:12.0-base nvidia-smi
 ```
 
+## Step Log Streaming
+
+Solar Host captures stdout/stderr from every step container and makes them available in two complementary ways.
+
+### Data flow
+
+```
+Container stdout/stderr
+        │
+        ▼ (demuxed)
+ JobStepExecutor._stream_logs()
+        │
+        ├──► JOBS_DIR/<job-id>/logs/<step>.log   (durable, combined)
+        │
+        └──► StepLogBuffer.append()
+                  │
+                  ├──► bounded in-memory deque  (latest 1000 lines)
+                  └──► emit queue
+                            │
+                            ▼ (every 100 ms)
+                  broadcast_step_log_batch()
+                            │
+                            ▼
+                  Solar Control  →  "step_log" Socket.IO event
+```
+
+### Event payload
+
+Each `step_log` event carries an `entries` array.  A normal log entry:
+
+```json
+{
+  "job_id":     "job-a1b2",
+  "step_name":  "train",
+  "step_index": 2,
+  "stream":     "stdout",
+  "seq":        42,
+  "timestamp":  "2026-05-21T19:00:00.123456+00:00",
+  "line":       "Epoch 1/10 loss=0.42"
+}
+```
+
+The final entry for a step is a **completion marker** on the same event type:
+
+```json
+{
+  "job_id":     "job-a1b2",
+  "step_name":  "train",
+  "step_index": 2,
+  "stream":     "stdout",
+  "seq":        43,
+  "timestamp":  "...",
+  "line":       "",
+  "completed":  true,
+  "exit_code":  0
+}
+```
+
+Using the same event shape for both regular lines and the completion marker means downstream consumers (S-032, Solar WebUI) only need to handle one event type.
+
+### Durability vs. real-time
+
+| | Durable | Real-time |
+|---|---|---|
+| Host log files | ✅ `JOBS_DIR/<job-id>/logs/<step>.log` | ❌ |
+| Socket.IO `step_log` | ❌ best-effort, lost on disconnect | ✅ |
+
+The host-side log file is always written regardless of Solar Control connectivity. It is the authoritative record.
+
+### Reconnect behaviour
+
+- `SolarControlClient._emit` is a no-op while disconnected — jobs never block or crash waiting for the WebSocket.
+- The emit queue uses `put_nowait` with a 10 000-entry cap; entries are silently dropped when the queue is full (e.g. sustained disconnect + high-frequency logging).
+- On reconnect, only new lines from that point forward are streamed; the durable log file can be read for historical lines.
+
 ## Backward Compatibility
 
 Existing configurations without `backend_type` are automatically treated as `llamacpp` instances. No migration required.

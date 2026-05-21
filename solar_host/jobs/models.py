@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,6 +23,22 @@ class StepStatus(str, Enum):
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Log models
+# ---------------------------------------------------------------------------
+
+
+class StepLogMessage(BaseModel):
+    """A single log line captured from a step container."""
+
+    seq: int
+    timestamp: str
+    stream: Literal["stdout", "stderr"]
+    line: str
+    completed: bool = False
+    exit_code: int | None = None
 
 
 # ---------------------------------------------------------------------------

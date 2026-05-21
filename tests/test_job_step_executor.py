@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -118,7 +118,7 @@ async def test_successful_step_returns_false() -> None:
     """A zero-exit step returns False (no fail-fast)."""
     step_exec, ds, store = _make_step_executor()
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     assert result is False
@@ -141,7 +141,7 @@ async def test_nonzero_exit_returns_true_and_marks_step_failed() -> None:
         "container-xyz", 2, ["error output"]
     )
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     assert result is True
@@ -162,7 +162,7 @@ async def test_container_start_error_returns_true_and_marks_step_failed() -> Non
     step_exec, ds, store = _make_step_executor()
     ds.create_container.side_effect = ContainerStartError("ctr", "API error")
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     assert result is True
@@ -182,7 +182,7 @@ async def test_remove_container_called_even_on_nonzero_exit() -> None:
     step_exec, ds, store = _make_step_executor()
     ds.wait_container.side_effect = ContainerNonZeroExitError("container-xyz", 1, [])
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     ds.remove_container.assert_called_once_with("container-xyz", True)
@@ -198,7 +198,7 @@ async def test_active_container_cleared_after_step() -> None:
     active: dict[str, str] = {}
     step_exec, ds, store = _make_step_executor(active_containers=active)
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     assert _JOB_ID not in active
@@ -263,7 +263,7 @@ async def test_preparation_step_flag_forwarded() -> None:
 
     ds.create_container.side_effect = _capture
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         await step_exec.run(_JOB_ID, 0, steps[0], _WORKSPACE)
 
     assert recorded == [True]
@@ -283,7 +283,7 @@ async def test_consumption_step_flag_forwarded() -> None:
 
     ds.create_container.side_effect = _capture
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         await step_exec.run(_JOB_ID, 0, steps[0], _WORKSPACE)
 
     assert recorded == [False]
@@ -374,7 +374,7 @@ async def test_gpu_unavailable_error_marks_step_failed() -> None:
     ds.create_container.side_effect = GpuUnavailableError("toolkit missing")
 
     with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]):
-        with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+        with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
             result = await step_exec.run(_JOB_ID, 0, step, _WORKSPACE)
 
     assert result is True
@@ -415,3 +415,88 @@ def test_build_environment_step_env_overrides_nvidia_vars() -> None:
     env = step_exec.build_environment(_JOB_ID, 0, step, _WORKSPACE)
     assert env["NVIDIA_VISIBLE_DEVICES"] == "0"
     assert env["NVIDIA_DRIVER_CAPABILITIES"] == "all"
+
+
+# ---------------------------------------------------------------------------
+# _stream_logs — buffer integration
+# ---------------------------------------------------------------------------
+
+_BUF_MODULE = "solar_host.jobs.step_executor.step_log_buffer"
+
+
+def test_stream_logs_appends_to_buffer(tmp_path: Path) -> None:
+    """_stream_logs dual-writes to file and calls step_log_buffer.append per chunk."""
+    step_exec, ds, _ = _make_step_executor()
+    ds.stream_logs.return_value = iter(
+        [("stdout", "hello\n"), ("stderr", "err\n")]
+    )
+
+    log_path = tmp_path / "test.log"
+    mock_buf = MagicMock()
+
+    with patch(_BUF_MODULE, mock_buf):
+        step_exec._stream_logs(_JOB_ID, 0, "train", "ctr-xyz", log_path)
+
+    assert mock_buf.append.call_count == 2
+    mock_buf.append.assert_any_call(_JOB_ID, "train", 0, "stdout", "hello\n")
+    mock_buf.append.assert_any_call(_JOB_ID, "train", 0, "stderr", "err\n")
+
+    content = log_path.read_text()
+    assert "hello" in content
+    assert "err" in content
+
+
+def test_stream_logs_writes_file_without_double_newline(tmp_path: Path) -> None:
+    """Lines that already end with \\n are not double-newlined in the log file."""
+    step_exec, ds, _ = _make_step_executor()
+    ds.stream_logs.return_value = iter([("stdout", "already\n")])
+
+    log_path = tmp_path / "test.log"
+    with patch(_BUF_MODULE):
+        step_exec._stream_logs(_JOB_ID, 0, "train", "ctr-xyz", log_path)
+
+    assert log_path.read_text() == "already\n"
+
+
+def test_stream_logs_failure_does_not_raise(tmp_path: Path) -> None:
+    """A streaming exception is caught; the method returns without raising."""
+    step_exec, ds, _ = _make_step_executor()
+    ds.stream_logs.side_effect = RuntimeError("docker broken")
+
+    log_path = tmp_path / "train.log"
+    with patch(_BUF_MODULE):
+        step_exec._stream_logs(_JOB_ID, 0, "train", "ctr-xyz", log_path)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# mark_completed called on success and non-zero exit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_mark_completed_called_on_success() -> None:
+    step_exec, ds, _ = _make_step_executor()
+    mock_buf = MagicMock()
+
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
+        with patch(_BUF_MODULE, mock_buf):
+            await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    mock_buf.mark_completed.assert_called_once_with(
+        _JOB_ID, "train", 0, exit_code=0
+    )
+
+
+@pytest.mark.anyio
+async def test_mark_completed_called_on_nonzero_exit() -> None:
+    step_exec, ds, _ = _make_step_executor()
+    ds.wait_container.side_effect = ContainerNonZeroExitError("ctr", 5, [])
+    mock_buf = MagicMock()
+
+    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
+        with patch(_BUF_MODULE, mock_buf):
+            await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    mock_buf.mark_completed.assert_called_once_with(
+        _JOB_ID, "train", 0, exit_code=5
+    )

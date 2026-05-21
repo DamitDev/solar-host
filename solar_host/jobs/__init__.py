@@ -14,6 +14,7 @@ from solar_host.jobs.models import (
     JobState,
     JobStatus,
     StepDefinition,
+    StepLogMessage,
     StepState,
     StepStatus,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "JobDefinition",
     "StepState",
     "JobState",
+    "StepLogMessage",
     # store
     "JobStore",
     "job_store",

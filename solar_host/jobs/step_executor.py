@@ -16,6 +16,7 @@ from solar_host.docker.errors import (
 )
 from solar_host.jobs.errors import GpuValidationError
 from solar_host.jobs.models import GpuOptions, JobStatus, StepStatus
+from solar_host.jobs.step_log_buffer import step_log_buffer
 from solar_host.memory_monitor import get_gpu_devices
 
 if TYPE_CHECKING:
@@ -93,7 +94,13 @@ class JobStepExecutor:
 
             log_path = workspace_path / "logs" / f"{step_def.name}.log"
             log_future = asyncio.get_event_loop().run_in_executor(
-                None, self._stream_logs_to_file, container_id, log_path
+                None,
+                self._stream_logs,
+                job_id,
+                step_index,
+                step_def.name,
+                container_id,
+                log_path,
             )
 
             return await self._wait_and_record(
@@ -166,6 +173,9 @@ class JobStepExecutor:
                 error_message=f"Step {step_def.name!r} failed with exit code {exc.exit_code}",
             )
             await self._drain_log_future(log_future)
+            step_log_buffer.mark_completed(
+                job_id, step_def.name, step_index, exit_code=exc.exit_code
+            )
             return True
 
         step_end = datetime.now(UTC)
@@ -178,6 +188,7 @@ class JobStepExecutor:
             exit_code=0,
         )
         await self._drain_log_future(log_future)
+        step_log_buffer.mark_completed(job_id, step_def.name, step_index, exit_code=0)
         return False
 
     def _validate_gpu_options(self, gpu: GpuOptions) -> None:
@@ -239,14 +250,31 @@ class JobStepExecutor:
 
         return env
 
-    def _stream_logs_to_file(self, container_id: str, log_path: Path) -> None:
-        """Synchronous log streaming from a container, written to *log_path*."""
+    def _stream_logs(
+        self,
+        job_id: str,
+        step_index: int,
+        step_name: str,
+        container_id: str,
+        log_path: Path,
+    ) -> None:
+        """Stream container logs to disk and the step log buffer (thread-safe).
+
+        Dual-writes each chunk to the combined host log file and enqueues it
+        in the per-step buffer for real-time Socket.IO emission.  Errors are
+        swallowed so that a streaming failure never fails the step.
+        """
         try:
             with log_path.open("a", encoding="utf-8") as fh:
-                for line in self._docker.stream_logs(container_id, follow=True, tail=0):
-                    fh.write(line)
-                    if not line.endswith("\n"):
+                for stream_tag, chunk in self._docker.stream_logs(
+                    container_id, follow=True, tail=0, demux=True
+                ):
+                    fh.write(chunk)
+                    if not chunk.endswith("\n"):
                         fh.write("\n")
+                    step_log_buffer.append(
+                        job_id, step_name, step_index, stream_tag, chunk
+                    )
         except Exception:
             logger.warning(
                 "Log streaming failed for container %s → %s", container_id, log_path
