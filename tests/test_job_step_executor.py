@@ -294,8 +294,20 @@ async def test_consumption_step_flag_forwarded() -> None:
 # ---------------------------------------------------------------------------
 
 _TWO_GPU_INVENTORY = [
-    {"index": 0, "uuid": "GPU-uuid-0", "name": "RTX 4090", "total_gb": 24.0, "used_gb": 0.0},
-    {"index": 1, "uuid": "GPU-uuid-1", "name": "RTX 4090", "total_gb": 24.0, "used_gb": 0.0},
+    {
+        "index": 0,
+        "uuid": "GPU-uuid-0",
+        "name": "RTX 4090",
+        "total_gb": 24.0,
+        "used_gb": 0.0,
+    },
+    {
+        "index": 1,
+        "uuid": "GPU-uuid-1",
+        "name": "RTX 4090",
+        "total_gb": 24.0,
+        "used_gb": 0.0,
+    },
 ]
 
 
@@ -321,13 +333,17 @@ def test_validate_gpu_options_count_minus_one_skips_count_check() -> None:
 def test_validate_gpu_options_valid_device_index() -> None:
     step_exec, _, _ = _make_step_executor()
     with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
-        step_exec._validate_gpu_options(GpuOptions(device_ids=["0", "1"]))  # no exception
+        step_exec._validate_gpu_options(
+            GpuOptions(device_ids=["0", "1"])
+        )  # no exception
 
 
 def test_validate_gpu_options_valid_device_uuid() -> None:
     step_exec, _, _ = _make_step_executor()
     with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
-        step_exec._validate_gpu_options(GpuOptions(device_ids=["GPU-uuid-0"]))  # no exception
+        step_exec._validate_gpu_options(
+            GpuOptions(device_ids=["GPU-uuid-0"])
+        )  # no exception
 
 
 def test_validate_gpu_options_invalid_device_id_raises() -> None:
@@ -340,7 +356,9 @@ def test_validate_gpu_options_invalid_device_id_raises() -> None:
 def test_validate_gpu_options_empty_inventory_skips() -> None:
     step_exec, _, _ = _make_step_executor()
     with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]):
-        step_exec._validate_gpu_options(GpuOptions(count=99))  # no exception — no inventory
+        step_exec._validate_gpu_options(
+            GpuOptions(count=99)
+        )  # no exception — no inventory
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +407,10 @@ def test_build_environment_step_env_overrides_nvidia_vars() -> None:
     step_exec, _, _ = _make_step_executor()
     step = _make_step(
         gpu=GpuOptions(count=1),
-        environment={"NVIDIA_VISIBLE_DEVICES": "0", "NVIDIA_DRIVER_CAPABILITIES": "all"},
+        environment={
+            "NVIDIA_VISIBLE_DEVICES": "0",
+            "NVIDIA_DRIVER_CAPABILITIES": "all",
+        },
     )
     env = step_exec.build_environment(_JOB_ID, 0, step, _WORKSPACE)
     assert env["NVIDIA_VISIBLE_DEVICES"] == "0"
