@@ -45,3 +45,7 @@ class ContainerNonZeroExitError(DockerServiceError):
         super().__init__(
             f"Container {container_id!r} exited with code {exit_code}.\n{tail}".strip()
         )
+
+
+class GpuUnavailableError(DockerServiceError):
+    """NVIDIA Container Toolkit is not available on this host."""

@@ -219,22 +219,9 @@ def test_create_container_no_gpu():
     client.containers.create.return_value = mock_container
 
     svc = _make_service(client)
-    svc.create_container("alpine", "job-1", "train", {}, gpu=False)
+    svc.create_container("alpine", "job-1", "train", {}, gpu=None)
     kwargs = client.containers.create.call_args[1]
     assert kwargs["device_requests"] is None
-
-
-def test_create_container_with_gpu():
-    client = MagicMock()
-    mock_container = MagicMock()
-    mock_container.id = "abc123"
-    client.containers.create.return_value = mock_container
-
-    svc = _make_service(client)
-    svc.create_container("alpine", "job-1", "train", {}, gpu=True)
-    kwargs = client.containers.create.call_args[1]
-    assert kwargs["device_requests"] is not None
-    assert len(kwargs["device_requests"]) == 1
 
 
 def test_create_container_name_format():

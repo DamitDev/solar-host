@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
 
 from solar_host.jobs.models import (
+    GpuOptions,
     JobDefinition,
     JobState,
     JobStatus,
@@ -58,27 +60,83 @@ def test_step_definition_required_fields():
 def test_step_definition_defaults():
     step = StepDefinition(name="train", image="acme/trainer:latest")
     assert step.environment == {}
-    assert step.gpu is False
+    assert step.gpu is None
     assert step.is_preparation_step is False
 
 
-def test_step_definition_with_all_fields():
+def test_step_definition_with_gpu_options():
+    gpu = GpuOptions(count=1)
     step = StepDefinition(
         name="download",
         image="acme/downloader:1.0",
         environment={"HF_MODEL": "llama3"},
-        gpu=True,
+        gpu=gpu,
         is_preparation_step=True,
     )
     assert step.name == "download"
     assert step.environment == {"HF_MODEL": "llama3"}
-    assert step.gpu is True
+    assert step.gpu is not None
+    assert step.gpu.count == 1
     assert step.is_preparation_step is True
 
 
 def test_step_definition_missing_required_raises():
     with pytest.raises(Exception):
         StepDefinition(name="train")  # type: ignore[call-arg]
+
+
+def test_step_definition_gpu_none_by_default():
+    step = StepDefinition(name="infer", image="acme/infer:1.0")
+    assert step.gpu is None
+
+
+def test_step_definition_gpu_with_count():
+    step = StepDefinition(name="train", image="acme/train:1.0", gpu=GpuOptions(count=2))
+    assert step.gpu is not None
+    assert step.gpu.count == 2
+    assert step.gpu.device_ids is None
+
+
+def test_step_definition_gpu_with_device_ids():
+    step = StepDefinition(
+        name="train", image="acme/train:1.0", gpu=GpuOptions(device_ids=["0", "1"])
+    )
+    assert step.gpu is not None
+    assert step.gpu.device_ids == ["0", "1"]
+    assert step.gpu.count is None
+
+
+# ---------------------------------------------------------------------------
+# GpuOptions
+# ---------------------------------------------------------------------------
+
+
+def test_gpu_options_count_only():
+    gpu = GpuOptions(count=1)
+    assert gpu.count == 1
+    assert gpu.device_ids is None
+
+
+def test_gpu_options_device_ids_only():
+    gpu = GpuOptions(device_ids=["0"])
+    assert gpu.device_ids == ["0"]
+    assert gpu.count is None
+
+
+def test_gpu_options_count_all():
+    gpu = GpuOptions(count=-1)
+    assert gpu.count == -1
+
+
+def test_gpu_options_both_fields():
+    gpu = GpuOptions(count=2, device_ids=["0", "1"])
+    assert gpu.count == 2
+    assert gpu.device_ids == ["0", "1"]
+
+
+def test_gpu_options_neither_field_raises():
+    with pytest.raises(ValidationError):
+        GpuOptions()
 
 
 # ---------------------------------------------------------------------------

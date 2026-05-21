@@ -5,6 +5,7 @@ from solar_host.docker.errors import (
     ContainerStartError,
     DaemonUnavailableError,
     DockerServiceError,
+    GpuUnavailableError,
     ImagePullError,
 )
 from solar_host.docker.service import ContainerStatus, DockerService
@@ -17,4 +18,5 @@ __all__ = [
     "ImagePullError",
     "ContainerStartError",
     "ContainerNonZeroExitError",
+    "GpuUnavailableError",
 ]

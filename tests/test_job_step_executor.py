@@ -16,6 +16,7 @@ import pytest
 from solar_host.config import Settings
 from solar_host.docker.errors import ContainerNonZeroExitError, ContainerStartError
 from solar_host.jobs.models import (
+    GpuOptions,
     JobState,
     JobStatus,
     StepDefinition,
@@ -49,7 +50,7 @@ _STEP_MODULE = "solar_host.jobs.step_executor"
 def _make_step(
     name: str = "train",
     image: str = "test/img:latest",
-    gpu: bool = False,
+    gpu: GpuOptions | None = None,
     is_preparation_step: bool = False,
     environment: dict[str, str] | None = None,
 ) -> StepDefinition:
@@ -251,7 +252,7 @@ async def test_preparation_step_flag_forwarded() -> None:
 
     recorded: list[bool] = []
 
-    def _capture(image, job_id, step_name, environment, gpu=False, is_preparation_step=False):  # type: ignore[misc]
+    def _capture(image, job_id, step_name, environment, gpu=None, is_preparation_step=False):  # type: ignore[misc]
         recorded.append(is_preparation_step)
         return "container-xyz"
 
@@ -271,7 +272,7 @@ async def test_consumption_step_flag_forwarded() -> None:
 
     recorded: list[bool] = []
 
-    def _capture(image, job_id, step_name, environment, gpu=False, is_preparation_step=False):  # type: ignore[misc]
+    def _capture(image, job_id, step_name, environment, gpu=None, is_preparation_step=False):  # type: ignore[misc]
         recorded.append(is_preparation_step)
         return "container-xyz"
 

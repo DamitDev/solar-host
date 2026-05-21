@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class JobStatus(str, Enum):
@@ -30,13 +30,32 @@ class StepStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 
+class GpuOptions(BaseModel):
+    """GPU execution options for a step container.
+
+    Maps directly to Docker SDK DeviceRequest semantics:
+    - At least one of count or device_ids must be set.
+    - device_ids takes precedence over count when both are set.
+    - count=-1 means all available GPUs (must be set explicitly).
+    """
+
+    count: int | None = None
+    device_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _require_count_or_device_ids(self) -> "GpuOptions":
+        if self.count is None and self.device_ids is None:
+            raise ValueError("gpu options require count or device_ids")
+        return self
+
+
 class StepDefinition(BaseModel):
     """Definition of a single pipeline step."""
 
     name: str
     image: str
     environment: dict[str, str] = Field(default_factory=dict)
-    gpu: bool = False
+    gpu: GpuOptions | None = None
     is_preparation_step: bool = False
 
 

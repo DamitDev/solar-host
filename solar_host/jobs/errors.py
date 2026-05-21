@@ -33,3 +33,15 @@ class InsufficientDiskError(JobsError):
             f"Insufficient disk space: required {required_gb:.1f} GB, "
             f"available {available_gb:.1f} GB"
         )
+
+
+class GpuValidationError(JobsError):
+    """Requested GPU device ID or count exceeds the host inventory."""
+
+    def __init__(self, requested: str, available_count: int) -> None:
+        self.requested = requested
+        self.available_count = available_count
+        super().__init__(
+            f"GPU validation failed: {requested!r} not available "
+            f"(host has {available_count} device(s))"
+        )

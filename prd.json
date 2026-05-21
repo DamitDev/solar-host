@@ -14,8 +14,8 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GpuUnavailableError added to docker/errors.py and exported; GpuValidationError added to jobs/errors.py and exported. 249 tests pass, ruff clean."
     },
     {
       "id": "US-002",
@@ -31,8 +31,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GpuOptions Pydantic model added with model_validator; StepDefinition.gpu migrated from bool to GpuOptions | None; exported from jobs/__init__.py. All tests updated and passing."
     },
     {
       "id": "US-003",

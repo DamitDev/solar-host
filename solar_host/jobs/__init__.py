@@ -1,6 +1,7 @@
 """Public API for the solar_host.jobs package."""
 
 from solar_host.jobs.errors import (
+    GpuValidationError,
     InsufficientDiskError,
     InvalidJobIdError,
     JobsError,
@@ -8,6 +9,7 @@ from solar_host.jobs.errors import (
 )
 from solar_host.jobs.executor import JobExecutor, cleanup_loop
 from solar_host.jobs.models import (
+    GpuOptions,
     JobDefinition,
     JobState,
     JobStatus,
@@ -23,12 +25,14 @@ __all__ = [
     "WorkspaceError",
     "InvalidJobIdError",
     "InsufficientDiskError",
+    "GpuValidationError",
     # executor
     "JobExecutor",
     "cleanup_loop",
     # models
     "JobStatus",
     "StepStatus",
+    "GpuOptions",
     "StepDefinition",
     "JobDefinition",
     "StepState",
