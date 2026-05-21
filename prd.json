@@ -48,8 +48,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "is_nvidia_toolkit_available() added; create_container gpu param changed to GpuOptions | None; DeviceRequest wiring via device_ids or count; GpuUnavailableError raised when toolkit missing. 269 tests pass."
     },
     {
       "id": "US-004",
@@ -63,8 +63,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "get_gpu_devices() added to memory_monitor.py returning per-device pynvml inventory; returns [] on exception or no GPUs."
     },
     {
       "id": "US-005",
@@ -81,8 +81,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "_validate_gpu_options() added; NVIDIA env vars injected via setdefault before step env merge; GpuUnavailableError + GpuValidationError caught in run() and recorded as step failure."
     },
     {
       "id": "US-006",
@@ -95,8 +95,8 @@
         "All tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "All GPU test cases added to test_docker_service.py, test_job_step_executor.py; test_job_models.py already had GpuOptions coverage. 269 tests pass."
     },
     {
       "id": "US-007",
@@ -109,8 +109,8 @@
         "Note recommended default gpu: {\"count\": 1} on multi-GPU hosts"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GPU Execution section added to README.md with manual verification command, JSON snippets, NVIDIA env var table, and multi-GPU recommendation."
     }
   ]
 }

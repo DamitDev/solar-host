@@ -14,7 +14,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from solar_host.config import Settings
-from solar_host.docker.errors import ContainerNonZeroExitError, ContainerStartError
+from solar_host.docker.errors import (
+    ContainerNonZeroExitError,
+    ContainerStartError,
+    GpuUnavailableError,
+)
+from solar_host.jobs.errors import GpuValidationError
 from solar_host.jobs.models import (
     GpuOptions,
     JobState,
@@ -282,3 +287,110 @@ async def test_consumption_step_flag_forwarded() -> None:
         await step_exec.run(_JOB_ID, 0, steps[0], _WORKSPACE)
 
     assert recorded == [False]
+
+
+# ---------------------------------------------------------------------------
+# _validate_gpu_options
+# ---------------------------------------------------------------------------
+
+_TWO_GPU_INVENTORY = [
+    {"index": 0, "uuid": "GPU-uuid-0", "name": "RTX 4090", "total_gb": 24.0, "used_gb": 0.0},
+    {"index": 1, "uuid": "GPU-uuid-1", "name": "RTX 4090", "total_gb": 24.0, "used_gb": 0.0},
+]
+
+
+def test_validate_gpu_options_valid_count() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        step_exec._validate_gpu_options(GpuOptions(count=2))  # no exception
+
+
+def test_validate_gpu_options_count_exceeds_inventory_raises() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        with pytest.raises(GpuValidationError):
+            step_exec._validate_gpu_options(GpuOptions(count=5))
+
+
+def test_validate_gpu_options_count_minus_one_skips_count_check() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        step_exec._validate_gpu_options(GpuOptions(count=-1))  # no exception
+
+
+def test_validate_gpu_options_valid_device_index() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        step_exec._validate_gpu_options(GpuOptions(device_ids=["0", "1"]))  # no exception
+
+
+def test_validate_gpu_options_valid_device_uuid() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        step_exec._validate_gpu_options(GpuOptions(device_ids=["GPU-uuid-0"]))  # no exception
+
+
+def test_validate_gpu_options_invalid_device_id_raises() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
+        with pytest.raises(GpuValidationError):
+            step_exec._validate_gpu_options(GpuOptions(device_ids=["99"]))
+
+
+def test_validate_gpu_options_empty_inventory_skips() -> None:
+    step_exec, _, _ = _make_step_executor()
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]):
+        step_exec._validate_gpu_options(GpuOptions(count=99))  # no exception — no inventory
+
+
+# ---------------------------------------------------------------------------
+# GpuUnavailableError propagates as step failure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_gpu_unavailable_error_marks_step_failed() -> None:
+    step = _make_step(gpu=GpuOptions(count=1))
+    store = _make_store_with_job([step])
+    step_exec, ds, _ = _make_step_executor(store=store)
+    ds.create_container.side_effect = GpuUnavailableError("toolkit missing")
+
+    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]):
+        with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs_to_file"):
+            result = await step_exec.run(_JOB_ID, 0, step, _WORKSPACE)
+
+    assert result is True
+    assert store.get(_JOB_ID).steps[0].status == StepStatus.failed  # type: ignore[union-attr]
+    assert "toolkit missing" in (store.get(_JOB_ID).steps[0].error_message or "")  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# build_environment — NVIDIA env vars
+# ---------------------------------------------------------------------------
+
+
+def test_build_environment_nvidia_vars_when_gpu_set() -> None:
+    step_exec, _, _ = _make_step_executor()
+    step = _make_step(gpu=GpuOptions(count=1))
+    env = step_exec.build_environment(_JOB_ID, 0, step, _WORKSPACE)
+    assert env["NVIDIA_VISIBLE_DEVICES"] == "all"
+    assert env["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
+
+
+def test_build_environment_no_nvidia_vars_when_gpu_none() -> None:
+    step_exec, _, _ = _make_step_executor()
+    step = _make_step(gpu=None)
+    env = step_exec.build_environment(_JOB_ID, 0, step, _WORKSPACE)
+    assert "NVIDIA_VISIBLE_DEVICES" not in env
+    assert "NVIDIA_DRIVER_CAPABILITIES" not in env
+
+
+def test_build_environment_step_env_overrides_nvidia_vars() -> None:
+    step_exec, _, _ = _make_step_executor()
+    step = _make_step(
+        gpu=GpuOptions(count=1),
+        environment={"NVIDIA_VISIBLE_DEVICES": "0", "NVIDIA_DRIVER_CAPABILITIES": "all"},
+    )
+    env = step_exec.build_environment(_JOB_ID, 0, step, _WORKSPACE)
+    assert env["NVIDIA_VISIBLE_DEVICES"] == "0"
+    assert env["NVIDIA_DRIVER_CAPABILITIES"] == "all"

@@ -15,9 +15,11 @@ from solar_host.docker.errors import (
     ContainerNonZeroExitError,
     ContainerStartError,
     DaemonUnavailableError,
+    GpuUnavailableError,
     ImagePullError,
 )
 from solar_host.docker.service import ContainerStatus, DockerService
+from solar_host.jobs.models import GpuOptions
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -484,3 +486,106 @@ def test_wait_container_not_found_raises():
     svc = _make_service(client)
     with pytest.raises(ContainerStartError):
         svc.wait_container("ghost")
+
+
+# ---------------------------------------------------------------------------
+# is_nvidia_toolkit_available
+# ---------------------------------------------------------------------------
+
+
+def test_nvidia_toolkit_available_when_nvidia_in_runtimes():
+    client = MagicMock()
+    client.info.return_value = {"Runtimes": {"nvidia": {}, "runc": {}}}
+    svc = _make_service(client)
+    assert svc.is_nvidia_toolkit_available() is True
+
+
+def test_nvidia_toolkit_unavailable_when_nvidia_not_in_runtimes():
+    client = MagicMock()
+    client.info.return_value = {"Runtimes": {"runc": {}}}
+    svc = _make_service(client)
+    assert svc.is_nvidia_toolkit_available() is False
+
+
+def test_nvidia_toolkit_unavailable_when_runtimes_missing():
+    client = MagicMock()
+    client.info.return_value = {}
+    svc = _make_service(client)
+    assert svc.is_nvidia_toolkit_available() is False
+
+
+def test_nvidia_toolkit_unavailable_on_exception():
+    client = MagicMock()
+    client.info.side_effect = Exception("daemon error")
+    svc = _make_service(client)
+    assert svc.is_nvidia_toolkit_available() is False
+
+
+# ---------------------------------------------------------------------------
+# create_container — GPU wiring
+# ---------------------------------------------------------------------------
+
+
+def _make_container(client: MagicMock, cid: str = "gpu-ctr") -> MagicMock:
+    mock = MagicMock()
+    mock.id = cid
+    client.containers.create.return_value = mock
+    return mock
+
+
+def test_create_container_gpu_none_no_device_requests():
+    client = MagicMock()
+    _make_container(client)
+    svc = _make_service(client)
+    svc.create_container("alpine", "job-1", "train", {}, gpu=None)
+    kwargs = client.containers.create.call_args[1]
+    assert kwargs["device_requests"] is None
+
+
+def test_create_container_gpu_count_builds_device_request():
+    client = MagicMock()
+    _make_container(client)
+    client.info.return_value = {"Runtimes": {"nvidia": {}}}
+    svc = _make_service(client)
+    svc.create_container("alpine", "job-1", "train", {}, gpu=GpuOptions(count=2))
+    kwargs = client.containers.create.call_args[1]
+    reqs = kwargs["device_requests"]
+    assert reqs is not None and len(reqs) == 1
+    assert reqs[0].count == 2
+    assert not reqs[0].device_ids  # Docker SDK normalises absent device_ids to []
+
+
+def test_create_container_gpu_count_minus_one():
+    client = MagicMock()
+    _make_container(client)
+    client.info.return_value = {"Runtimes": {"nvidia": {}}}
+    svc = _make_service(client)
+    svc.create_container("alpine", "job-1", "train", {}, gpu=GpuOptions(count=-1))
+    kwargs = client.containers.create.call_args[1]
+    reqs = kwargs["device_requests"]
+    assert reqs is not None
+    assert reqs[0].count == -1
+
+
+def test_create_container_gpu_device_ids_builds_device_request():
+    client = MagicMock()
+    _make_container(client)
+    client.info.return_value = {"Runtimes": {"nvidia": {}}}
+    svc = _make_service(client)
+    svc.create_container(
+        "alpine", "job-1", "train", {}, gpu=GpuOptions(device_ids=["0", "1"])
+    )
+    kwargs = client.containers.create.call_args[1]
+    reqs = kwargs["device_requests"]
+    assert reqs is not None and len(reqs) == 1
+    assert reqs[0].device_ids == ["0", "1"]
+    assert reqs[0].count == 0  # Docker SDK normalises absent count to 0
+
+
+def test_create_container_gpu_raises_when_toolkit_missing():
+    client = MagicMock()
+    _make_container(client)
+    client.info.return_value = {"Runtimes": {"runc": {}}}
+    svc = _make_service(client)
+    with pytest.raises(GpuUnavailableError):
+        svc.create_container("alpine", "job-1", "train", {}, gpu=GpuOptions(count=1))

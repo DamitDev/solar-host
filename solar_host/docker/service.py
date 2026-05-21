@@ -15,8 +15,10 @@ from solar_host.docker.errors import (
     ContainerNonZeroExitError,
     ContainerStartError,
     DaemonUnavailableError,
+    GpuUnavailableError,
     ImagePullError,
 )
+from solar_host.jobs.models import GpuOptions
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +79,21 @@ class DockerService:
     # Container lifecycle
     # ------------------------------------------------------------------
 
+    def is_nvidia_toolkit_available(self) -> bool:
+        """Return True if the Docker daemon has the nvidia runtime registered."""
+        try:
+            info = self._client.info()
+            return "nvidia" in (info.get("Runtimes") or {})
+        except Exception:
+            return False
+
     def create_container(
         self,
         image: str,
         job_id: str,
         step_name: str,
         environment: dict[str, str],
-        gpu: bool = False,
+        gpu: GpuOptions | None = None,
         is_preparation_step: bool = False,
     ) -> str:
         """Create (but don't start) a container and return its ID.
@@ -115,14 +125,26 @@ class DockerService:
         }
 
         device_requests = None
-        if gpu:
-            device_requests = [
-                docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
-            ]
+        if gpu is not None:
+            if not self.is_nvidia_toolkit_available():
+                raise GpuUnavailableError(
+                    "NVIDIA Container Toolkit is not available on this host"
+                )
+            if gpu.device_ids is not None:
+                device_requests = [
+                    docker.types.DeviceRequest(
+                        device_ids=gpu.device_ids, capabilities=[["gpu"]]
+                    )
+                ]
+            else:
+                # count is guaranteed non-None by GpuOptions validator when device_ids is None
+                device_requests = [
+                    docker.types.DeviceRequest(count=gpu.count, capabilities=[["gpu"]])
+                ]
 
         container_name = f"solar-job-{job_id}-{step_name}"
         logger.info(
-            "Creating container %s from image %s (gpu=%s)", container_name, image, gpu
+            "Creating container %s from image %s (gpu=%r)", container_name, image, gpu
         )
         try:
             container = self._client.containers.create(

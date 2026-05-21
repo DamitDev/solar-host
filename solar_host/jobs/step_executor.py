@@ -9,8 +9,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from solar_host.docker.errors import ContainerNonZeroExitError, ContainerStartError
-from solar_host.jobs.models import JobStatus, StepStatus
+from solar_host.docker.errors import (
+    ContainerNonZeroExitError,
+    ContainerStartError,
+    GpuUnavailableError,
+)
+from solar_host.jobs.errors import GpuValidationError
+from solar_host.jobs.models import GpuOptions, JobStatus, StepStatus
+from solar_host.memory_monitor import get_gpu_devices
 
 if TYPE_CHECKING:
     from solar_host.config import Settings
@@ -66,6 +72,9 @@ class JobStepExecutor:
 
         container_id: str | None = None
         try:
+            if step_def.gpu is not None:
+                self._validate_gpu_options(step_def.gpu)
+
             container_id = await asyncio.to_thread(
                 self._docker.create_container,
                 step_def.image,
@@ -91,7 +100,7 @@ class JobStepExecutor:
                 job_id, step_index, step_def, step_start, container_id, log_future
             )
 
-        except ContainerStartError as exc:
+        except (ContainerStartError, GpuUnavailableError, GpuValidationError) as exc:
             step_end = datetime.now(UTC)
             self._store.update_step(
                 job_id,
@@ -171,6 +180,26 @@ class JobStepExecutor:
         await self._drain_log_future(log_future)
         return False
 
+    def _validate_gpu_options(self, gpu: GpuOptions) -> None:
+        """Validate GPU options against host inventory before container creation.
+
+        Raises GpuValidationError if requested devices exceed the available inventory.
+        Skips validation silently when pynvml inventory is unavailable.
+        """
+        devices = get_gpu_devices()
+        if not devices:
+            return
+        available_count = len(devices)
+        if gpu.device_ids is not None:
+            available_uuids = {d["uuid"] for d in devices}
+            available_indices = {str(d["index"]) for d in devices}
+            for dev_id in gpu.device_ids:
+                if dev_id not in available_uuids and dev_id not in available_indices:
+                    raise GpuValidationError(dev_id, available_count)
+        elif gpu.count is not None and gpu.count != -1:
+            if gpu.count > available_count:
+                raise GpuValidationError(f"count={gpu.count}", available_count)
+
     def build_environment(
         self,
         job_id: str,
@@ -199,6 +228,11 @@ class JobStepExecutor:
         env["HARBOR_PASSWORD"] = s.harbor_password
         env["HF_TOKEN"] = s.hf_token
         env["HF_HOME"] = "/workspace/.cache/huggingface"
+
+        # Section 4.2.5: NVIDIA env vars when GPU is requested (callers may override).
+        if step_def.gpu is not None:
+            env.setdefault("NVIDIA_VISIBLE_DEVICES", "all")
+            env.setdefault("NVIDIA_DRIVER_CAPABILITIES", "compute,utility")
 
         # Section 4.3: Step-specific variables (override infra vars if clashing).
         env.update(step_def.environment)

@@ -526,6 +526,46 @@ Once approved, instances are accessible through solar-control’s OpenAI-compati
 - `/v1/classify` - Classification (huggingface_classification)
 - `/v1/embeddings` - Embeddings (huggingface_embedding)
 
+## GPU Execution
+
+Solar Host supports NVIDIA GPU execution for step containers via the `gpu` field on each step definition. GPU access requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/overview.html) to be installed and the Docker daemon to have the `nvidia` runtime registered.
+
+### Job JSON examples
+
+```json
+{ "gpu": { "count": 1 } }
+```
+One GPU — Docker picks the device. Recommended default on multi-GPU hosts.
+
+```json
+{ "gpu": { "count": -1 } }
+```
+All available GPUs (explicit replacement for the legacy `gpu: true` boolean).
+
+```json
+{ "gpu": { "device_ids": ["0"] } }
+```
+Pin a specific GPU by index or UUID.
+
+> **Note:** `"gpu": {}` (empty object) is a validation error. At least one of `count` or `device_ids` must be provided.
+
+### NVIDIA environment variables
+
+When a step requests GPU access, the following environment variables are injected automatically (callers may override them via `step.environment`):
+
+| Variable | Default |
+|---|---|
+| `NVIDIA_VISIBLE_DEVICES` | `all` |
+| `NVIDIA_DRIVER_CAPABILITIES` | `compute,utility` |
+
+### Manual verification
+
+To verify the NVIDIA Container Toolkit is working on a host without running a full job:
+
+```bash
+docker run --rm --gpus '"device=0"' nvidia/cuda:12.0-base nvidia-smi
+```
+
 ## Backward Compatibility
 
 Existing configurations without `backend_type` are automatically treated as `llamacpp` instances. No migration required.

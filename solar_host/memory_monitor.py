@@ -164,6 +164,41 @@ def _get_mac_memory() -> Optional[Dict[str, Union[float, str]]]:
         return None
 
 
+def get_gpu_devices() -> list[dict[str, object]]:
+    """Return per-device GPU info via pynvml.
+
+    Each entry: {"index": int, "uuid": str, "name": str,
+                 "total_gb": float, "used_gb": float}
+    Returns an empty list if pynvml is unavailable or no GPUs are detected.
+    """
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+        try:
+            device_count = pynvml.nvmlDeviceGetCount()
+            devices: list[dict[str, object]] = []
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                uuid: str = pynvml.nvmlDeviceGetUUID(handle)
+                name: str = pynvml.nvmlDeviceGetName(handle)
+                devices.append(
+                    {
+                        "index": i,
+                        "uuid": uuid,
+                        "name": name,
+                        "total_gb": round(mem.total / (1024**3), 2),
+                        "used_gb": round(mem.used / (1024**3), 2),
+                    }
+                )
+        finally:
+            pynvml.nvmlShutdown()
+        return devices
+    except Exception:
+        return []
+
+
 def get_disk_info(path: str) -> Optional[Dict[str, float]]:
     """Return disk usage stats (in GB) for the filesystem containing *path*.
 
