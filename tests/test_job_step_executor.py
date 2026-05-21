@@ -427,9 +427,7 @@ _BUF_MODULE = "solar_host.jobs.step_executor.step_log_buffer"
 def test_stream_logs_appends_to_buffer(tmp_path: Path) -> None:
     """_stream_logs dual-writes to file and calls step_log_buffer.append per chunk."""
     step_exec, ds, _ = _make_step_executor()
-    ds.stream_logs.return_value = iter(
-        [("stdout", "hello\n"), ("stderr", "err\n")]
-    )
+    ds.stream_logs.return_value = iter([("stdout", "hello\n"), ("stderr", "err\n")])
 
     log_path = tmp_path / "test.log"
     mock_buf = MagicMock()
@@ -482,9 +480,7 @@ async def test_mark_completed_called_on_success() -> None:
         with patch(_BUF_MODULE, mock_buf):
             await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
-    mock_buf.mark_completed.assert_called_once_with(
-        _JOB_ID, "train", 0, exit_code=0
-    )
+    mock_buf.mark_completed.assert_called_once_with(_JOB_ID, "train", 0, exit_code=0)
 
 
 @pytest.mark.anyio
@@ -497,6 +493,4 @@ async def test_mark_completed_called_on_nonzero_exit() -> None:
         with patch(_BUF_MODULE, mock_buf):
             await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
-    mock_buf.mark_completed.assert_called_once_with(
-        _JOB_ID, "train", 0, exit_code=5
-    )
+    mock_buf.mark_completed.assert_called_once_with(_JOB_ID, "train", 0, exit_code=5)
