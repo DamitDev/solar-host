@@ -641,6 +641,47 @@ The host-side log file is always written regardless of Solar Control connectivit
 - The emit queue uses `put_nowait` with a 10 000-entry cap; entries are silently dropped when the queue is full (e.g. sustained disconnect + high-frequency logging).
 - On reconnect, only new lines from that point forward are streamed; the durable log file can be read for historical lines.
 
+## Job Lifecycle Events (S-026)
+
+Solar Host emits structured Socket.IO lifecycle events at every job and step state transition so Solar Control and downstream consumers (SuperNova, Solar WebUI) can monitor progress without polling.
+
+### Event catalog
+
+| Socket.IO event  | Trigger                                                    | Key payload fields                                                                                  |
+| ---------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `job_started`    | After `store.add(running)` in `JobExecutor.run_job`        | `job_id`, `host_id`, `name`, `status`, `timestamp`                                                 |
+| `step_started`   | After `store.update_step(running)` in `JobStepExecutor`    | `job_id`, `host_id`, `step_name`, `step_index`, `status`, `timestamp`                              |
+| `step_completed` | Successful container exit in `_wait_and_record`            | `job_id`, `host_id`, `step_name`, `step_index`, `status`, `timestamp`, `duration_s`, `exit_code`   |
+| `step_failed`    | Non-zero exit or start error in `_wait_and_record` / `run` | `job_id`, `host_id`, `step_name`, `step_index`, `status`, `timestamp`, `duration_s`, `exit_code`, `error_summary` |
+| `job_completed`  | All steps succeeded — `_finalise_job` completed path       | `job_id`, `host_id`, `status`, `timestamp`, `workspace_path`, `retention_deadline`                 |
+| `job_failed`     | Any step failed or unexpected exception                    | `job_id`, `host_id`, `status`, `timestamp`, `error_message`                                        |
+| `job_cancelled`  | Cancellation signal set — `_finalise_job` cancelled path   | `job_id`, `host_id`, `status`, `timestamp`                                                         |
+
+`host_id` is the value received in `registration_ack` from Solar Control; it is `null` when the host has not yet registered.
+
+`retention_deadline` is `finished_at + retention_hours` (ISO 8601 string).
+
+`error_summary` for `step_failed` contains the last N lines of stderr captured in `ContainerNonZeroExitError.last_stderr_lines`.
+
+### Consistency guarantee
+
+Each lifecycle event is emitted **immediately after the matching `JobStore` mutation in the same coroutine**. A consumer that receives a `job_completed` event can safely call `GET /jobs/{id}` and find the status already set to `completed`.
+
+### Fire-and-forget semantics
+
+- Events are emitted directly by Socket.IO event name (e.g. `sio.emit("job_started", data)`) — no envelope, no batching.
+- `SolarControlClient.send_job_lifecycle` is a no-op when disconnected; jobs never block waiting for the WebSocket.
+- There is no retry queue for lifecycle events. State is always recoverable from `GET /jobs/{id}`.
+
+### Implementation details
+
+```
+solar_host/jobs/events.py        — payload builders + async emit_* functions
+solar_host/ws_client.py          — send_job_lifecycle / broadcast_job_lifecycle
+solar_host/jobs/executor.py      — job_started, job_completed, job_failed, job_cancelled
+solar_host/jobs/step_executor.py — step_started, step_completed, step_failed
+```
+
 ## Backward Compatibility
 
 Existing configurations without `backend_type` are automatically treated as `llamacpp` instances. No migration required.

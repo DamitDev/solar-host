@@ -16,7 +16,7 @@
         "error_summary reuses StepState error_message (last N lines of stderr from ContainerNonZeroExitError.last_stderr_lines)"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on S-023 (step executor). Events emit synchronously with store updates in the same coroutine."
     },
     {
@@ -30,7 +30,7 @@
         "Emission is fire-and-forget: no-op if disconnected, no buffering, no retry queue"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Separate event names enable per-event handlers on Solar Control (S-032 routing)."
     },
     {
@@ -45,7 +45,7 @@
         "Terminal job events (job_completed, job_failed, job_cancelled) are emitted exactly once per job"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -60,7 +60,7 @@
         "Events emit immediately after store mutation in the same coroutine"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Lifecycle events are infrequent (max ~2N+2 per job with N steps); no batching unlike step_log."
     },
     {
@@ -74,7 +74,7 @@
         "All event assertions patch broadcast_job_lifecycle"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -89,7 +89,7 @@
         "Document fire-and-forget semantics (no buffering, no retry; state recoverable from API)"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Consumed by S-032 (Solar Control proxy), S-033 host status, SuperNova job monitoring, and Solar WebUI."
     }
   ]

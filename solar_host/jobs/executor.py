@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from solar_host.jobs.errors import InsufficientDiskError
+from solar_host.jobs.events import (
+    emit_job_cancelled,
+    emit_job_completed,
+    emit_job_failed,
+    emit_job_started,
+)
 from solar_host.jobs.models import JobState, JobStatus, StepState, StepStatus
 from solar_host.jobs.step_executor import JobStepExecutor
 from solar_host.jobs.step_log_buffer import step_log_buffer
@@ -101,6 +107,7 @@ class JobExecutor:
                 retention_hours=job_def.retention_hours,
             )
         )
+        await emit_job_started(job_def.job_id, job_def.name, now)
 
         cancel_event = asyncio.Event()
         with self._lock:
@@ -115,12 +122,14 @@ class JobExecutor:
             raise
         except Exception as exc:
             logger.exception("Unexpected error running job %r", job_def.job_id)
+            failed_at = datetime.now(UTC)
             self._store.update(
                 job_def.job_id,
                 status=JobStatus.failed,
                 error_message=str(exc),
-                finished_at=datetime.now(UTC),
+                finished_at=failed_at,
             )
+            await emit_job_failed(job_def.job_id, failed_at, str(exc))
             raise
         finally:
             with self._lock:
@@ -128,7 +137,7 @@ class JobExecutor:
                 self._active_containers.pop(job_def.job_id, None)
             step_log_buffer.remove(job_def.job_id)
 
-        self._finalise_job(job_def.job_id, failed, cancel_event)
+        await self._finalise_job(job_def.job_id, failed, cancel_event)
 
         result = self._store.get(job_def.job_id)
         assert result is not None
@@ -210,12 +219,12 @@ class JobExecutor:
 
         return False
 
-    def _finalise_job(
+    async def _finalise_job(
         self, job_id: str, failed: bool, cancel_event: asyncio.Event
     ) -> None:
         """Write the terminal JobStatus when the step loop exits cleanly."""
         job = self._store.get(job_id)
-        if job is None or job.status != JobStatus.running:
+        if job is None:
             return
 
         if cancel_event.is_set():
@@ -225,7 +234,29 @@ class JobExecutor:
         else:
             terminal = JobStatus.completed
 
-        self._store.update(job_id, status=terminal, finished_at=datetime.now(UTC))
+        finished_at = datetime.now(UTC)
+        if job.status == JobStatus.running:
+            # Normal path: first entity to write the terminal status.
+            self._store.update(job_id, status=terminal, finished_at=finished_at)
+        else:
+            # Step executor already set terminal status (e.g. job.status=failed).
+            # Reuse the existing finished_at so the event timestamp matches the store.
+            finished_at = job.finished_at or finished_at
+
+        if terminal == JobStatus.completed:
+            await emit_job_completed(
+                job_id,
+                finished_at,
+                job.workspace_path,
+                job.retention_hours,
+            )
+        elif terminal == JobStatus.failed:
+            updated = self._store.get(job_id)
+            await emit_job_failed(
+                job_id, finished_at, updated.error_message if updated else None
+            )
+        else:
+            await emit_job_cancelled(job_id, finished_at)
 
     def _cancel_remaining_steps(self, job_id: str, from_index: int) -> None:
         """Mark all pending steps from *from_index* onwards as cancelled."""

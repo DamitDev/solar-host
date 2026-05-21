@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -494,3 +494,89 @@ async def test_mark_completed_called_on_nonzero_exit() -> None:
             await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     mock_buf.mark_completed.assert_called_once_with(_JOB_ID, "train", 0, exit_code=5)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle event emission from step executor
+# ---------------------------------------------------------------------------
+
+_BROADCAST = "solar_host.jobs.events.broadcast_job_lifecycle"
+
+
+@pytest.mark.anyio
+async def test_step_started_emitted_on_run() -> None:
+    step_exec, _, _ = _make_step_executor()
+
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "step_started" in calls
+
+
+@pytest.mark.anyio
+async def test_step_completed_emitted_on_success() -> None:
+    step_exec, _, _ = _make_step_executor()
+
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    assert result is False
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "step_completed" in calls
+    assert "step_failed" not in calls
+
+    completed_payload = next(
+        call.args[1]
+        for call in mock_bc.call_args_list
+        if call.args[0] == "step_completed"
+    )
+    assert completed_payload["exit_code"] == 0
+    assert completed_payload["step_name"] == "train"
+
+
+@pytest.mark.anyio
+async def test_step_failed_emitted_on_nonzero_exit() -> None:
+    step_exec, ds, _ = _make_step_executor()
+    ds.wait_container.side_effect = ContainerNonZeroExitError("ctr", 2, ["FAIL"])
+
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    assert result is True
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "step_failed" in calls
+    assert "step_completed" not in calls
+
+    failed_payload = next(
+        call.args[1]
+        for call in mock_bc.call_args_list
+        if call.args[0] == "step_failed"
+    )
+    assert failed_payload["exit_code"] == 2
+    assert "FAIL" in (failed_payload["error_summary"] or "")
+
+
+@pytest.mark.anyio
+async def test_step_failed_emitted_on_container_start_error() -> None:
+    step_exec, ds, _ = _make_step_executor()
+    ds.create_container.side_effect = ContainerStartError("ctr", "API error")
+
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+
+    assert result is True
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "step_failed" in calls

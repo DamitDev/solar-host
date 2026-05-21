@@ -15,6 +15,11 @@ from solar_host.docker.errors import (
     GpuUnavailableError,
 )
 from solar_host.jobs.errors import GpuValidationError
+from solar_host.jobs.events import (
+    emit_step_completed,
+    emit_step_failed,
+    emit_step_started,
+)
 from solar_host.jobs.models import GpuOptions, JobStatus, StepStatus
 from solar_host.jobs.step_log_buffer import step_log_buffer
 from solar_host.memory_monitor import get_gpu_devices
@@ -66,6 +71,7 @@ class JobStepExecutor:
             status=StepStatus.running,
             started_at=step_start,
         )
+        await emit_step_started(job_id, step_def.name, step_index, step_start)
 
         environment = self.build_environment(
             job_id, step_index, step_def, workspace_path
@@ -109,18 +115,23 @@ class JobStepExecutor:
 
         except (ContainerStartError, GpuUnavailableError, GpuValidationError) as exc:
             step_end = datetime.now(UTC)
+            duration_s = (step_end - step_start).total_seconds()
+            error_msg = str(exc)
             self._store.update_step(
                 job_id,
                 step_index,
                 status=StepStatus.failed,
                 finished_at=step_end,
-                duration_s=(step_end - step_start).total_seconds(),
-                error_message=str(exc),
+                duration_s=duration_s,
+                error_message=error_msg,
             )
             self._store.update(
                 job_id,
                 status=JobStatus.failed,
                 error_message=f"Step {step_def.name!r} container start failed: {exc}",
+            )
+            await emit_step_failed(
+                job_id, step_def.name, step_index, step_end, duration_s, None, error_msg
             )
             return True
 
@@ -155,6 +166,7 @@ class JobStepExecutor:
             await asyncio.to_thread(self._docker.wait_container, container_id)
         except ContainerNonZeroExitError as exc:
             step_end = datetime.now(UTC)
+            duration_s = (step_end - step_start).total_seconds()
             error_msg = (
                 "\n".join(exc.last_stderr_lines) if exc.last_stderr_lines else str(exc)
             )
@@ -163,7 +175,7 @@ class JobStepExecutor:
                 step_index,
                 status=StepStatus.failed,
                 finished_at=step_end,
-                duration_s=(step_end - step_start).total_seconds(),
+                duration_s=duration_s,
                 exit_code=exc.exit_code,
                 error_message=error_msg,
             )
@@ -176,19 +188,32 @@ class JobStepExecutor:
             step_log_buffer.mark_completed(
                 job_id, step_def.name, step_index, exit_code=exc.exit_code
             )
+            await emit_step_failed(
+                job_id,
+                step_def.name,
+                step_index,
+                step_end,
+                duration_s,
+                exc.exit_code,
+                error_msg,
+            )
             return True
 
         step_end = datetime.now(UTC)
+        duration_s = (step_end - step_start).total_seconds()
         self._store.update_step(
             job_id,
             step_index,
             status=StepStatus.completed,
             finished_at=step_end,
-            duration_s=(step_end - step_start).total_seconds(),
+            duration_s=duration_s,
             exit_code=0,
         )
         await self._drain_log_future(log_future)
         step_log_buffer.mark_completed(job_id, step_def.name, step_index, exit_code=0)
+        await emit_step_completed(
+            job_id, step_def.name, step_index, step_end, duration_s, 0
+        )
         return False
 
     def _validate_gpu_options(self, gpu: GpuOptions) -> None:

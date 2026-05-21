@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -225,3 +225,128 @@ async def test_container_start_failure_fails_job() -> None:
     assert result.status == JobStatus.failed
     assert result.steps[0].status == StepStatus.failed
     assert result.steps[1].status == StepStatus.cancelled
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle event emission
+# ---------------------------------------------------------------------------
+
+_BROADCAST = "solar_host.jobs.events.broadcast_job_lifecycle"
+
+
+@pytest.mark.anyio
+async def test_job_started_emitted_on_run() -> None:
+    executor, ds, _ = _make_executor()
+    job_def = _make_job([_make_step("a")])
+    ds.create_container.return_value = "c1"
+
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        await executor.run_job(job_def)
+
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "job_started" in calls
+
+
+@pytest.mark.anyio
+async def test_job_completed_emitted_on_success() -> None:
+    executor, ds, _ = _make_executor()
+    job_def = _make_job([_make_step("a")])
+    ds.create_container.return_value = "c1"
+
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await executor.run_job(job_def)
+
+    assert result.status == JobStatus.completed
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "job_completed" in calls
+    assert "job_failed" not in calls
+    assert "job_cancelled" not in calls
+
+
+@pytest.mark.anyio
+async def test_job_failed_emitted_on_step_failure() -> None:
+    executor, ds, _ = _make_executor()
+    job_def = _make_job([_make_step("a")])
+    ds.wait_container.side_effect = ContainerNonZeroExitError("c1", 1, ["err"])
+
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await executor.run_job(job_def)
+
+    assert result.status == JobStatus.failed
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "job_failed" in calls
+    assert "job_completed" not in calls
+
+
+@pytest.mark.anyio
+async def test_job_cancelled_emitted_on_cancellation() -> None:
+    executor, ds, _ = _make_executor()
+    job_def = _make_job([_make_step("a"), _make_step("b")])
+    ds.create_container.side_effect = ["c1", "c2"]
+
+    original_to_thread = asyncio.to_thread
+
+    async def patched_to_thread(fn, *args, **kwargs):  # type: ignore[misc]
+        if fn is ds.wait_container and args and args[0] == "c1":
+            await executor.cancel_job(job_def.job_id)
+            return 0
+        return await original_to_thread(fn, *args, **kwargs)
+
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+        patch("asyncio.to_thread", side_effect=patched_to_thread),
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        result = await executor.run_job(job_def)
+
+    assert result.status == JobStatus.cancelled
+    calls = [call.args[0] for call in mock_bc.call_args_list]
+    assert "job_cancelled" in calls
+    assert "job_completed" not in calls
+    assert "job_failed" not in calls
+
+
+@pytest.mark.anyio
+async def test_no_duplicate_terminal_job_events_on_success() -> None:
+    """job_completed emitted exactly once when all steps succeed."""
+    executor, ds, _ = _make_executor()
+    job_def = _make_job([_make_step("a"), _make_step("b")])
+    ds.create_container.side_effect = ["c1", "c2"]
+
+    with (
+        _WORKSPACE_PATCHES[0],
+        _WORKSPACE_PATCHES[1],
+        _WORKSPACE_PATCHES[2],
+        _WORKSPACE_PATCHES[3],
+        patch(_BROADCAST, new_callable=AsyncMock) as mock_bc,
+    ):
+        await executor.run_job(job_def)
+
+    terminal_events = [
+        call.args[0]
+        for call in mock_bc.call_args_list
+        if call.args[0] in ("job_completed", "job_failed", "job_cancelled")
+    ]
+    assert terminal_events.count("job_completed") == 1
+    assert len(terminal_events) == 1
