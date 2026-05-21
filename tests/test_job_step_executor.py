@@ -558,9 +558,7 @@ async def test_step_failed_emitted_on_nonzero_exit() -> None:
     assert "step_completed" not in calls
 
     failed_payload = next(
-        call.args[1]
-        for call in mock_bc.call_args_list
-        if call.args[0] == "step_failed"
+        call.args[1] for call in mock_bc.call_args_list if call.args[0] == "step_failed"
     )
     assert failed_payload["exit_code"] == 2
     assert "FAIL" in (failed_payload["error_summary"] or "")

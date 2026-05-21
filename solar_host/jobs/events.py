@@ -28,10 +28,6 @@ def _host_id() -> str | None:
     return client.host_id if client else None
 
 
-def _iso(dt: datetime) -> str:
-    return dt.isoformat()
-
-
 # ---------------------------------------------------------------------------
 # Payload builders (pure functions – easy to unit-test)
 # ---------------------------------------------------------------------------
@@ -43,7 +39,7 @@ def build_job_started(job_id: str, name: str, timestamp: datetime) -> dict:
         "host_id": _host_id(),
         "name": name,
         "status": "running",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
     }
 
 
@@ -60,9 +56,9 @@ def build_job_completed(
         "job_id": job_id,
         "host_id": _host_id(),
         "status": "completed",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
         "workspace_path": workspace_path,
-        "retention_deadline": _iso(retention_deadline),
+        "retention_deadline": retention_deadline.isoformat(),
     }
 
 
@@ -73,7 +69,7 @@ def build_job_failed(
         "job_id": job_id,
         "host_id": _host_id(),
         "status": "failed",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
         "error_message": error_message,
     }
 
@@ -83,7 +79,7 @@ def build_job_cancelled(job_id: str, timestamp: datetime) -> dict:
         "job_id": job_id,
         "host_id": _host_id(),
         "status": "cancelled",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
     }
 
 
@@ -96,7 +92,7 @@ def build_step_started(
         "step_name": step_name,
         "step_index": step_index,
         "status": "running",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
     }
 
 
@@ -114,7 +110,7 @@ def build_step_completed(
         "step_name": step_name,
         "step_index": step_index,
         "status": "completed",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
         "duration_s": duration_s,
         "exit_code": exit_code,
     }
@@ -135,7 +131,7 @@ def build_step_failed(
         "step_name": step_name,
         "step_index": step_index,
         "status": "failed",
-        "timestamp": _iso(timestamp),
+        "timestamp": timestamp.isoformat(),
         "duration_s": duration_s,
         "exit_code": exit_code,
         "error_summary": error_summary,
@@ -215,6 +211,12 @@ async def emit_step_failed(
     await broadcast_job_lifecycle(
         "step_failed",
         build_step_failed(
-            job_id, step_name, step_index, timestamp, duration_s, exit_code, error_summary
+            job_id,
+            step_name,
+            step_index,
+            timestamp,
+            duration_s,
+            exit_code,
+            error_summary,
         ),
     )
