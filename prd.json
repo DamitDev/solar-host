@@ -1,0 +1,96 @@
+{
+  "project": "Solar Host",
+  "branchName": "feature/S-026",
+  "description": "S-026 Lifecycle Events - Emit structured Socket.IO lifecycle events at job/step state transitions so Solar Control and downstream consumers can monitor progress without polling",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create events module with payload builders and emit functions",
+      "description": "As a developer, I need a dedicated events module that builds lifecycle payloads and emits them via the WebSocket client so executors stay decoupled from Socket.IO details.",
+      "acceptanceCriteria": [
+        "Create solar_host/jobs/events.py with pure payload-builder helpers for all 7 event types: job_started, step_started, step_completed, step_failed, job_completed, job_failed, job_cancelled",
+        "Expose async emit_* functions that build payloads and call broadcast_job_lifecycle",
+        "Obtain host_id from get_client() at emit time; emit host_id: null when no client is connected",
+        "Payload fields match spec: job_id, host_id, name (job_started), step_name/step_index (step events), status, timestamp (ISO), duration_s/exit_code/error_summary where applicable, workspace_path/retention_deadline (job_completed), error_message (job_failed)",
+        "retention_deadline is finished_at + retention_hours as ISO string",
+        "error_summary reuses StepState error_message (last N lines of stderr from ContainerNonZeroExitError.last_stderr_lines)"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Depends on S-023 (step executor). Events emit synchronously with store updates in the same coroutine."
+    },
+    {
+      "id": "US-002",
+      "title": "Add broadcast_job_lifecycle to ws_client",
+      "description": "As a developer, I need WebSocket client helpers for lifecycle events so emission follows the same fire-and-forget pattern as step_log and log_batch.",
+      "acceptanceCriteria": [
+        "Add SolarControlClient.send_job_lifecycle(event_name: str, data: dict) to solar_host/ws_client.py",
+        "Add module-level broadcast_job_lifecycle(event_name: str, data: dict) mirroring broadcast_step_log_batch",
+        "Each lifecycle event is emitted as its own Socket.IO event name (e.g. sio.emit('job_started', data)), not wrapped in a generic envelope",
+        "Emission is fire-and-forget: no-op if disconnected, no buffering, no retry queue"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Separate event names enable per-event handlers on Solar Control (S-032 routing)."
+    },
+    {
+      "id": "US-003",
+      "title": "Integrate lifecycle events into job executor",
+      "description": "As Solar Control, I need job-level lifecycle events emitted at the same state transitions as JobStore updates so API status and events always agree.",
+      "acceptanceCriteria": [
+        "After store.add(running) in executor.run_job, call await emit_job_started(...)",
+        "In _finalise_job, call emit_job_completed / emit_job_failed / emit_job_cancelled after store.update on the respective paths",
+        "In the unexpected exception handler, call await emit_job_failed(...) after store update",
+        "Convert _finalise_job from sync to async (single call site in run_job)",
+        "Terminal job events (job_completed, job_failed, job_cancelled) are emitted exactly once per job"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Integrate lifecycle events into step executor",
+      "description": "As Solar Control, I need step-level lifecycle events at each step transition so consumers can track per-step progress and failures.",
+      "acceptanceCriteria": [
+        "After store.update_step(..., status=StepStatus.running) in step_executor.run, call await emit_step_started(...)",
+        "In _wait_and_record success path, call await emit_step_completed(...) with duration_s and exit_code",
+        "In _wait_and_record failure path, call await emit_step_failed(...) with duration_s, exit_code, and error_summary",
+        "In run() except block for container start errors, call await emit_step_failed(...)",
+        "Events emit immediately after store mutation in the same coroutine"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Lifecycle events are infrequent (max ~2N+2 per job with N steps); no batching unlike step_log."
+    },
+    {
+      "id": "US-005",
+      "title": "Add unit tests for lifecycle event emission",
+      "description": "As a developer, I need tests verifying correct event names, payloads, and emission timing across success, failure, and cancellation flows.",
+      "acceptanceCriteria": [
+        "Create tests/test_job_events.py: payload builder shape tests, emit_* calls broadcast_job_lifecycle with correct event name and payload, host_id is null when no client connected",
+        "Extend tests/test_job_executor.py: job_started emitted once on run; job_completed / job_failed / job_cancelled in respective flows; no duplicate terminal events",
+        "Extend tests/test_job_step_executor.py: step_started / step_completed / step_failed in success and failure scenarios",
+        "All event assertions patch broadcast_job_lifecycle"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Document Job Lifecycle Events in README",
+      "description": "As an integrator, I need README documentation for lifecycle events so Solar Control and WebUI teams know event names, triggers, and payload schemas.",
+      "acceptanceCriteria": [
+        "Add 'Job Lifecycle Events (S-026)' section to README.md after the existing 'Step Log Streaming (S-025)' section",
+        "Document all 7 event names and when they fire",
+        "Document payload schema for each event type",
+        "Document relationship to store state (guaranteed consistency with GET /jobs/{id})",
+        "Document fire-and-forget semantics (no buffering, no retry; state recoverable from API)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Consumed by S-032 (Solar Control proxy), S-033 host status, SuperNova job monitoring, and Solar WebUI."
+    }
+  ]
+}
