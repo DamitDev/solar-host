@@ -42,8 +42,8 @@
         "Existing run_job / cancel_job behaviour is unchanged"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added _tasks dict, submit_job, await_job, await_all, and _run_job_from_state to JobExecutor. 315 tests pass. Commit 63a3e5c."
     },
     {
       "id": "US-004",

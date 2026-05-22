@@ -68,9 +68,91 @@ class JobExecutor:
             lock=self._lock,
         )
 
+        # Background asyncio.Task per job, keyed by job_id.
+        self._tasks: dict[str, asyncio.Task[JobState]] = {}
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    async def submit_job(self, job_def: JobDefinition) -> JobState:
+        """Schedule *job_def* as a background task and return the initial :class:`JobState`.
+
+        The task is tracked in ``_tasks`` so it can be awaited via
+        :meth:`await_job` or :meth:`await_all`.
+
+        Raises:
+            ValueError: when the job ID is invalid.
+            KeyError: when the job ID is already present in the store.
+            InsufficientDiskError: when disk space is below threshold.
+        """
+        validate_job_id(job_def.job_id)
+
+        min_gb = (
+            job_def.min_free_disk_gb
+            if job_def.min_free_disk_gb is not None
+            else self._settings.min_free_disk_gb
+        )
+        check_disk_space(Path(self._settings.jobs_dir), min_gb)
+
+        workspace_path = await asyncio.to_thread(
+            create_workspace, job_def, self._settings
+        )
+
+        now = datetime.now(UTC)
+        initial_state = JobState(
+            job_id=job_def.job_id,
+            name=job_def.name,
+            status=JobStatus.running,
+            steps=[StepState(name=s.name) for s in job_def.steps],
+            current_step_index=-1,
+            workspace_path=str(workspace_path),
+            created_at=now,
+            started_at=now,
+            retention_hours=job_def.retention_hours,
+            submission_id=job_def.submission_id,
+            correlation_id=job_def.correlation_id,
+        )
+        self._store.add(initial_state)
+
+        task: asyncio.Task[JobState] = asyncio.create_task(
+            self._run_job_from_state(job_def, workspace_path, min_gb),
+            name=f"job-{job_def.job_id}",
+        )
+        self._tasks[job_def.job_id] = task
+        task.add_done_callback(lambda t: self._tasks.pop(job_def.job_id, None))
+
+        return initial_state
+
+    async def await_job(self, job_id: str, timeout: float = 10.0) -> None:
+        """Wait for the background task for *job_id* to finish.
+
+        No-op if no task is tracked for the given job ID.
+
+        Raises:
+            asyncio.TimeoutError: when the task does not finish within *timeout* seconds.
+        """
+        task = self._tasks.get(job_id)
+        if task is None:
+            return
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+
+    async def await_all(self, timeout: float = 30.0) -> None:
+        """Wait for all tracked background tasks to finish (used during shutdown).
+
+        Individually absorbs exceptions from tasks to ensure all are awaited.
+        """
+        tasks = list(self._tasks.values())
+        if not tasks:
+            return
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        for t in pending:
+            logger.warning("Task %r did not finish within shutdown timeout", t.get_name())
+        for t in done:
+            if not t.cancelled():
+                exc = t.exception()
+                if exc is not None:
+                    logger.warning("Task %r raised during shutdown: %s", t.get_name(), exc)
 
     async def run_job(self, job_def: JobDefinition) -> JobState:
         """Execute all steps of *job_def* sequentially and return the final state.
@@ -173,6 +255,54 @@ class JobExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _run_job_from_state(
+        self,
+        job_def: JobDefinition,
+        workspace_path: Path,
+        min_gb: float,
+    ) -> JobState:
+        """Run the execution phase of a job whose store entry already exists.
+
+        Called exclusively from the background task created by :meth:`submit_job`.
+        Mirrors the post-setup portion of :meth:`run_job`.
+        """
+        job_id = job_def.job_id
+        job_state = self._store.get(job_id)
+        assert job_state is not None
+        await emit_job_started(job_id, job_def.name, job_state.started_at or datetime.now(UTC))
+
+        cancel_event = asyncio.Event()
+        with self._lock:
+            self._cancel_events[job_id] = cancel_event
+
+        failed = False
+        try:
+            failed = await self._run_steps(job_def, workspace_path, min_gb, cancel_event)
+        except InsufficientDiskError:
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected error running job %r", job_id)
+            failed_at = datetime.now(UTC)
+            self._store.update(
+                job_id,
+                status=JobStatus.failed,
+                error_message=str(exc),
+                finished_at=failed_at,
+            )
+            await emit_job_failed(job_id, failed_at, str(exc))
+            raise
+        finally:
+            with self._lock:
+                self._cancel_events.pop(job_id, None)
+                self._active_containers.pop(job_id, None)
+            step_log_buffer.remove(job_id)
+
+        await self._finalise_job(job_id, failed, cancel_event)
+
+        result = self._store.get(job_id)
+        assert result is not None
+        return result
 
     async def _run_steps(
         self,
