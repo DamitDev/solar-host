@@ -685,3 +685,165 @@ solar_host/jobs/step_executor.py — step_started, step_completed, step_failed
 ## Backward Compatibility
 
 Existing configurations without `backend_type` are automatically treated as `llamacpp` instances. No migration required.
+
+## Job REST API (S-027)
+
+> **Intended callers: Solar Control only.** These endpoints are not part of the public API surface.
+
+Solar Host exposes three endpoints for submitting and managing containerised multi-step jobs. All endpoints require the `X-API-Key` header (same key as every other endpoint).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/jobs` | Submit a new job for background execution |
+| `GET` | `/jobs/{job_id}` | Inspect the current state of a job |
+| `DELETE` | `/jobs/{job_id}` | Cancel a running job and delete its workspace |
+
+### `POST /jobs` — Submit a job
+
+**Request body** (`JobDefinition` shape):
+
+```json
+{
+  "job_id": "my-job-001",
+  "name": "Fine-tune run",
+  "steps": [
+    {
+      "name": "train",
+      "image": "pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime",
+      "command": ["python", "train.py"],
+      "environment": {"EPOCHS": "5"},
+      "gpu": {"count": 1}
+    }
+  ],
+  "submission_id": "ctrl-sub-abc123",
+  "correlation_id": "workflow-xyz"
+}
+```
+
+- `submission_id` and `correlation_id` are optional strings Solar Control can use to correlate host jobs with its own records.
+- `job_id` must be a simple alphanumeric slug (no path traversal characters).
+
+**Response — 202 Accepted:**
+
+```json
+{
+  "job_id": "my-job-001",
+  "status": "running",
+  "workspace_path": "/var/solar/jobs/my-job-001",
+  "submission_id": "ctrl-sub-abc123",
+  "correlation_id": "workflow-xyz"
+}
+```
+
+**Error codes:**
+
+| Code | Cause |
+|------|-------|
+| 400 | Invalid `job_id`, empty `steps`, or GPU validation error |
+| 409 | A job with the same `job_id` already exists in the store |
+| 503 | Docker daemon is unavailable (executor disabled) |
+| 507 | Insufficient disk space |
+
+### `GET /jobs/{job_id}` — Inspect a job
+
+**Response — 200 OK:**
+
+```json
+{
+  "job_id": "my-job-001",
+  "name": "Fine-tune run",
+  "status": "running",
+  "current_step_index": 0,
+  "workspace_path": "/var/solar/jobs/my-job-001",
+  "created_at": "2026-05-21T19:00:00.000000+00:00",
+  "started_at": "2026-05-21T19:00:01.000000+00:00",
+  "finished_at": null,
+  "retention_hours": 24.0,
+  "error_message": null,
+  "submission_id": "ctrl-sub-abc123",
+  "correlation_id": "workflow-xyz",
+  "steps": [
+    {
+      "name": "train",
+      "status": "running",
+      "container_id": "abc123def456",
+      "started_at": "2026-05-21T19:00:01.500000+00:00",
+      "finished_at": null,
+      "duration_s": null,
+      "exit_code": null,
+      "error_message": null,
+      "log_file": "/var/solar/jobs/my-job-001/logs/train.log",
+      "recent_logs": [
+        {
+          "seq": 1,
+          "stream": "stdout",
+          "line": "Epoch 1/5 loss=0.87",
+          "timestamp": "2026-05-21T19:00:05.000000+00:00"
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `log_file` is the host-side path to the durable combined stdout/stderr log for that step.
+- `recent_logs` is a tail of the in-memory log buffer (up to 100 entries). Real-time streaming is available via Socket.IO `step_log` events (S-025).
+
+**Error codes:**
+
+| Code | Cause |
+|------|-------|
+| 404 | Unknown `job_id` |
+
+### `DELETE /jobs/{job_id}` — Cancel a job
+
+Performs synchronous cancellation per S-021 §6.3:
+
+1. Signals the cancel event and stops the active container.
+2. Waits up to 10 s for the `run_job` task to reach a terminal state.
+3. Deletes the workspace directory.
+4. Removes the job from the in-memory store and log buffer.
+
+**Response — 200 OK:**
+
+```json
+{"detail": "cancelled", "job_id": "my-job-001"}
+```
+
+**Error codes:**
+
+| Code | Cause |
+|------|-------|
+| 404 | Unknown `job_id` |
+| 409 | Job is already in a terminal state (`completed`, `failed`, or `cancelled`) — the cleanup loop will remove it |
+
+### Example curl commands
+
+```bash
+API_KEY="your-secret-key-here"
+HOST="http://localhost:8001"
+
+# Submit a job
+curl -s -X POST "$HOST/jobs" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "demo-001",
+    "name": "Demo job",
+    "steps": [
+      {
+        "name": "hello",
+        "image": "alpine:3.19",
+        "command": ["echo", "hello from Solar Host"]
+      }
+    ]
+  }' | jq .
+
+# Poll state
+curl -s "$HOST/jobs/demo-001" -H "X-API-Key: $API_KEY" | jq .status
+
+# Cancel (if still running)
+curl -s -X DELETE "$HOST/jobs/demo-001" -H "X-API-Key: $API_KEY" | jq .
+```

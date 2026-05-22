@@ -122,8 +122,8 @@
         "PR body includes short description, Changes list (new router, model fields, executor task tracking, tests, README update), and Closes #S-027"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Appended /jobs section to README.md with endpoint descriptions, request/response shapes, error tables, and example curl commands. PR drafted: feat(api): add /jobs REST endpoints (S-027)."
     }
   ]
 }
