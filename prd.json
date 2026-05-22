@@ -94,8 +94,8 @@
         "Auth smoke test: missing or wrong X-API-Key returns 401"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created tests/test_routes_jobs.py with 14 tests covering all happy paths and error paths (400/409/503/507), correlation round-trip, and auth smoke test. All 329 tests pass. Commit ea52f08."
     },
     {
       "id": "US-007",
