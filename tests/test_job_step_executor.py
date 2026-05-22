@@ -257,7 +257,9 @@ async def test_preparation_step_flag_forwarded() -> None:
 
     recorded: list[bool] = []
 
-    def _capture(image, job_id, step_name, environment, gpu=None, is_preparation_step=False):  # type: ignore[misc]
+    def _capture(
+        image, job_id, step_name, environment, gpu=None, is_preparation_step=False
+    ):  # type: ignore[misc]
         recorded.append(is_preparation_step)
         return "container-xyz"
 
@@ -277,7 +279,9 @@ async def test_consumption_step_flag_forwarded() -> None:
 
     recorded: list[bool] = []
 
-    def _capture(image, job_id, step_name, environment, gpu=None, is_preparation_step=False):  # type: ignore[misc]
+    def _capture(
+        image, job_id, step_name, environment, gpu=None, is_preparation_step=False
+    ):  # type: ignore[misc]
         recorded.append(is_preparation_step)
         return "container-xyz"
 

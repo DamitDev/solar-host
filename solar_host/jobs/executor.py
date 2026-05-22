@@ -147,12 +147,16 @@ class JobExecutor:
             return
         done, pending = await asyncio.wait(tasks, timeout=timeout)
         for t in pending:
-            logger.warning("Task %r did not finish within shutdown timeout", t.get_name())
+            logger.warning(
+                "Task %r did not finish within shutdown timeout", t.get_name()
+            )
         for t in done:
             if not t.cancelled():
                 exc = t.exception()
                 if exc is not None:
-                    logger.warning("Task %r raised during shutdown: %s", t.get_name(), exc)
+                    logger.warning(
+                        "Task %r raised during shutdown: %s", t.get_name(), exc
+                    )
 
     async def run_job(self, job_def: JobDefinition) -> JobState:
         """Execute all steps of *job_def* sequentially and return the final state.
@@ -270,7 +274,9 @@ class JobExecutor:
         job_id = job_def.job_id
         job_state = self._store.get(job_id)
         assert job_state is not None
-        await emit_job_started(job_id, job_def.name, job_state.started_at or datetime.now(UTC))
+        await emit_job_started(
+            job_id, job_def.name, job_state.started_at or datetime.now(UTC)
+        )
 
         cancel_event = asyncio.Event()
         with self._lock:
@@ -278,7 +284,9 @@ class JobExecutor:
 
         failed = False
         try:
-            failed = await self._run_steps(job_def, workspace_path, min_gb, cancel_event)
+            failed = await self._run_steps(
+                job_def, workspace_path, min_gb, cancel_event
+            )
         except InsufficientDiskError:
             raise
         except Exception as exc:

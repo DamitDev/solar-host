@@ -194,12 +194,12 @@ def test_create_container_output_and_config_always_rw():
         config_entry = next(
             v for v in volumes.values() if v["bind"] == "/workspace/config"
         )
-        assert (
-            output_entry["mode"] == "rw"
-        ), f"output not rw when is_preparation_step={prep_flag}"
-        assert (
-            config_entry["mode"] == "rw"
-        ), f"config not rw when is_preparation_step={prep_flag}"
+        assert output_entry["mode"] == "rw", (
+            f"output not rw when is_preparation_step={prep_flag}"
+        )
+        assert config_entry["mode"] == "rw", (
+            f"config not rw when is_preparation_step={prep_flag}"
+        )
 
 
 def test_create_container_user_set():

@@ -58,8 +58,8 @@
         "Single error-to-HTTP mapping helper: ValueError->400, KeyError (duplicate)->409, InsufficientDiskError->507, WorkspaceError->500, GpuValidationError->400, executor None->503"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created solar_host/routes/jobs.py with JobSubmitRequest/JobSubmitResponse/StepStateResponse/JobStateResponse, three handlers, and _map_error helper. Commit dd35f90."
     },
     {
       "id": "US-005",
@@ -71,8 +71,8 @@
         "App starts and /jobs routes are reachable"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Router registered and await_all(timeout=30) added to lifespan shutdown. Commit dd35f90."
     },
     {
       "id": "US-006",
