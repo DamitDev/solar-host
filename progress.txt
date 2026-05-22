@@ -1,0 +1,2 @@
+US-001: feature/S-027 branch already existed (checked out).
+US-002 [DONE]: Added submission_id and correlation_id (str | None = None) to JobDefinition and JobState in models.py; propagated both fields from JobDefinition into JobState in executor.py run_job. All 44 pre-existing tests pass. Committed: 95503ac.

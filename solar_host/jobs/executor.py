@@ -105,6 +105,8 @@ class JobExecutor:
                 created_at=now,
                 started_at=now,
                 retention_hours=job_def.retention_hours,
+                submission_id=job_def.submission_id,
+                correlation_id=job_def.correlation_id,
             )
         )
         await emit_job_started(job_def.job_id, job_def.name, now)

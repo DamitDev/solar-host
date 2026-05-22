@@ -88,6 +88,8 @@ class JobDefinition(BaseModel):
     training_config: dict[str, Any] | None = None
     model_selection: dict[str, Any] | None = None
     deployment: dict[str, Any] | None = None
+    submission_id: str | None = None
+    correlation_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -122,3 +124,5 @@ class JobState(BaseModel):
     finished_at: datetime | None = None
     retention_hours: float = 24.0
     error_message: str | None = None
+    submission_id: str | None = None
+    correlation_id: str | None = None

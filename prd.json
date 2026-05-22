@@ -12,8 +12,8 @@
         "Branch is checked out and ready for development"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Branch already existed and was checked out."
     },
     {
       "id": "US-002",
@@ -26,8 +26,8 @@
         "Existing tests that construct JobDefinition/JobState without these fields still pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Both fields added to JobDefinition and JobState; propagated in executor.py run_job. 44 pre-existing tests pass. Commit 95503ac."
     },
     {
       "id": "US-003",
