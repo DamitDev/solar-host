@@ -108,8 +108,8 @@
         "Any regressions in pre-existing tests caused by the new model fields are fixed"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ruff check clean, ruff format clean, uv run pytest -q: 329 passed (no regressions)."
     },
     {
       "id": "US-008",
