@@ -255,7 +255,7 @@ class TestDeleteJob:
         assert body["job_id"] == "job-001"
 
         mock_executor.cancel_job.assert_awaited_once_with("job-001")
-        mock_executor.await_job.assert_awaited_once_with("job-001", timeout=10.0)
+        mock_executor.await_job.assert_awaited_once_with("job-001", timeout=20.0)
         mock_del_ws.assert_called_once_with(Path(state.workspace_path))
         assert mock_store.get("job-001") is None
 

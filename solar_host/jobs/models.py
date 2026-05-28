@@ -34,7 +34,7 @@ class StepLogMessage(BaseModel):
     """A single log line captured from a step container."""
 
     seq: int
-    timestamp: str
+    timestamp: datetime
     stream: Literal["stdout", "stderr"]
     line: str
     completed: bool = False
@@ -68,28 +68,99 @@ class GpuOptions(BaseModel):
 class StepDefinition(BaseModel):
     """Definition of a single pipeline step."""
 
-    name: str
-    image: str
-    environment: dict[str, str] = Field(default_factory=dict)
-    gpu: GpuOptions | None = None
+    name: str = Field(examples=["download_model"])
+    image: str = Field(examples=["imgrepo.damit.hu/supernova/download-model:v1"])
+    environment: dict[str, str] = Field(
+        default_factory=dict,
+        examples=[{"MODEL_URI": "huggingface://microsoft/Phi-3.5-mini-instruct"}],
+    )
+    gpu: GpuOptions | None = Field(default=None, examples=[None])
     is_preparation_step: bool = False
 
 
 class JobDefinition(BaseModel):
     """Full job definition submitted to the executor."""
 
-    job_id: str
-    name: str
+    job_id: str = Field(examples=["job-abc123"])
+    name: str = Field(examples=["phi-3.5-finetune"])
     steps: list[StepDefinition]
-    retention_hours: float = 24.0
-    min_free_disk_gb: float | None = None
-    base_model_uri: str | None = None
-    training_data_uri: str | None = None
-    training_config: dict[str, Any] | None = None
-    model_selection: dict[str, Any] | None = None
-    deployment: dict[str, Any] | None = None
-    submission_id: str | None = None
-    correlation_id: str | None = None
+    retention_hours: float = Field(default=24.0, examples=[24.0])
+    min_free_disk_gb: float | None = Field(default=None, examples=[5.0])
+    base_model_uri: str | None = Field(
+        default=None, examples=["huggingface://microsoft/Phi-3.5-mini-instruct"]
+    )
+    training_data_uri: str | None = Field(
+        default=None, examples=["repo://training-dataset:v2"]
+    )
+    training_config: dict[str, Any] | None = Field(
+        default=None,
+        examples=[{"epochs": 3, "batch_size": 4, "learning_rate": 2e-5}],
+    )
+    model_selection: dict[str, Any] | None = Field(
+        default=None,
+        examples=[{"strategy": "best_loss", "metric": "eval_loss", "direction": "min"}],
+    )
+    deployment: dict[str, Any] | None = Field(
+        default=None,
+        examples=[{"target_model_name": "phi-3.5-finetuned", "replicas": 1}],
+    )
+    submission_id: str | None = Field(default=None, examples=["sub-42"])
+    correlation_id: str | None = Field(default=None, examples=["corr-99"])
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "job_id": "job-abc123",
+                    "name": "phi-3.5-finetune",
+                    "steps": [
+                        {
+                            "name": "download_model",
+                            "image": "imgrepo.damit.hu/supernova/download-model:v1",
+                            "environment": {
+                                "MODEL_URI": "huggingface://microsoft/Phi-3.5-mini-instruct"
+                            },
+                            "is_preparation_step": True,
+                        },
+                        {
+                            "name": "download_dataset",
+                            "image": "imgrepo.damit.hu/supernova/download-dataset:v1",
+                            "environment": {
+                                "DATASET_URI": "repo://training-dataset:v2"
+                            },
+                            "is_preparation_step": True,
+                        },
+                        {
+                            "name": "train",
+                            "image": "imgrepo.damit.hu/supernova/train:v1",
+                            "environment": {},
+                            "gpu": {"count": 1},
+                        },
+                    ],
+                    "retention_hours": 24.0,
+                    "min_free_disk_gb": 5.0,
+                    "base_model_uri": "huggingface://microsoft/Phi-3.5-mini-instruct",
+                    "training_data_uri": "repo://training-dataset:v2",
+                    "training_config": {
+                        "epochs": 3,
+                        "batch_size": 4,
+                        "learning_rate": 2e-5,
+                    },
+                    "model_selection": {
+                        "strategy": "best_loss",
+                        "metric": "eval_loss",
+                        "direction": "min",
+                    },
+                    "deployment": {
+                        "target_model_name": "phi-3.5-finetuned",
+                        "replicas": 1,
+                    },
+                    "submission_id": "sub-42",
+                    "correlation_id": "corr-99",
+                }
+            ]
+        }
+    }
 
 
 # ---------------------------------------------------------------------------

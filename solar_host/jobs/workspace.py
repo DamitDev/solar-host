@@ -25,6 +25,22 @@ _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 _WORKSPACE_SUBDIRS = ("models", "data", "output", "config", "logs")
 
 
+def ensure_jobs_dir() -> Path:
+    """Create the jobs root directory, resolving it to an absolute path.
+
+    Called once at startup so that every downstream consumer (workspace
+    creation, log-file paths, cleanup) works with an absolute path.
+    """
+    from solar_host.config import settings
+
+    resolved = Path(settings.jobs_dir).resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    # Overwrite the configuration so that all later accesses use the
+    # absolute, resolved path.
+    settings.jobs_dir = str(resolved)
+    return resolved
+
+
 def validate_job_id(job_id: str) -> None:
     """Reject job IDs containing unsafe characters or path-traversal sequences.
 
@@ -51,7 +67,16 @@ def check_disk_space(jobs_dir: Path, min_free_gb: float) -> None:
         jobs_dir: Path on the filesystem partition to measure.
         min_free_gb: Required free space in gibibytes.
     """
-    usage = shutil.disk_usage(jobs_dir)
+    # Walk up the path until we find an existing directory (works with paths
+    # that don't exist yet, e.g. before workspace creation).
+    target = jobs_dir.resolve()
+    while not target.exists():
+        parent = target.parent
+        if parent == target:
+            # Reached filesystem root — treat as unwritable.
+            raise InsufficientDiskError(required_gb=min_free_gb, available_gb=0.0)
+        target = parent
+    usage = shutil.disk_usage(target)
     available_gb = usage.free / (1024**3)
     if available_gb < min_free_gb:
         raise InsufficientDiskError(required_gb=min_free_gb, available_gb=available_gb)
@@ -94,7 +119,7 @@ def create_workspace(job_def: JobDefinition, settings: Settings) -> Path:
         try:
             os.chown(subpath, settings.container_uid, settings.container_gid)
         except PermissionError:
-            logger.warning(
+            logger.debug(
                 "Could not chown %s to %d:%d (permission denied; continuing)",
                 subpath,
                 settings.container_uid,
@@ -105,7 +130,7 @@ def create_workspace(job_def: JobDefinition, settings: Settings) -> Path:
     try:
         os.chown(workspace, settings.container_uid, settings.container_gid)
     except PermissionError:
-        logger.warning(
+        logger.debug(
             "Could not chown workspace root %s (permission denied; continuing)",
             workspace,
         )

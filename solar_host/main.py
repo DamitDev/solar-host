@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,7 @@ from solar_host.routes import instances, jobs, models, websockets
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 from solar_host.jobs import JobExecutor, cleanup_loop, job_store
 from solar_host.jobs.step_log_buffer import step_log_flush_loop
+from solar_host.jobs.workspace import ensure_jobs_dir
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,14 @@ async def lifespan(app: FastAPI):
 
     ensure_models_dir()
     logger.info("Models directory: %s", get_models_dir())
+
+    ensure_jobs_dir()
+    logger.info("Jobs directory: %s", settings.jobs_dir)
+
+    # Resolve HF cache directory to absolute so all mount paths are stable.
+    settings.hf_cache_dir = str(Path(settings.hf_cache_dir).resolve())
+    Path(settings.hf_cache_dir).mkdir(parents=True, exist_ok=True)
+    logger.info("HF cache directory: %s", settings.hf_cache_dir)
 
     # --- Job execution layer ---
     from solar_host.docker.service import DockerService

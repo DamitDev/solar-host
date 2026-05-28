@@ -6,6 +6,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from solar_host.models.base import Instance, InstanceStatus
@@ -70,7 +71,12 @@ class Settings(BaseSettings):
     jobs_dir: str = "./jobs"
     container_uid: int = 1000
     container_gid: int = 1000
-    hf_cache_dir: str = "./hf-cache"
+    # HuggingFace cache directory shared across job containers.
+    # Priority: HF_CACHE_DIR (env) → HF_HOME (env) → ~/.cache/huggingface
+    hf_cache_dir: str = Field(
+        default_factory=lambda: os.environ.get("HF_HOME")
+        or str(Path.home() / ".cache" / "huggingface")
+    )
 
 
 settings = Settings()

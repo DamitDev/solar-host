@@ -157,6 +157,24 @@ class DockerService:
                 privileged=False,
                 device_requests=device_requests,
             )
+        except _docker_errors.ImageNotFound:
+            logger.info("Image %s not found locally — attempting pull", image)
+            try:
+                self.pull_image(image)
+            except ImagePullError as pull_exc:
+                raise ContainerStartError(
+                    container_name, f"Image {image!r} not found and pull failed: {pull_exc}"
+                ) from pull_exc
+            container = self._client.containers.create(
+                image,
+                name=container_name,
+                environment=environment,
+                volumes=volumes,
+                user=f"{s.container_uid}:{s.container_gid}",
+                network_mode="bridge",
+                privileged=False,
+                device_requests=device_requests,
+            )
         except _docker_errors.APIError as exc:
             raise ContainerStartError(container_name, str(exc)) from exc
 

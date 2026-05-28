@@ -53,7 +53,11 @@ def _map_error(exc: Exception) -> HTTPException:
     if isinstance(exc, GpuValidationError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "gpu_unavailable"},
+            detail={
+                "error": "gpu_unavailable",
+                "requested": exc.requested,
+                "available_count": exc.available_count,
+            },
         )
     if isinstance(exc, WorkspaceError):
         return HTTPException(
@@ -148,10 +152,17 @@ async def delete_job(job_id: str, request: Request) -> dict:
 
     await executor.cancel_job(job_id)
 
+    # Wait for the cancelled task to finish.  The Docker stop timeout is 30 s
+    # (10 s SIGTERM grace + kill); use 20 s here so the API doesn't time out
+    # before Docker even sends SIGKILL.
     try:
-        await executor.await_job(job_id, timeout=10.0)
+        await executor.await_job(job_id, timeout=20.0)
     except asyncio.TimeoutError:
         logger.warning("Timed out waiting for job %r to finish after cancel", job_id)
+    except Exception:
+        logger.exception(
+            "Error awaiting job %r after cancel — cleaning up anyway", job_id
+        )
 
     if job.workspace_path:
         await asyncio.to_thread(delete_workspace, Path(job.workspace_path))

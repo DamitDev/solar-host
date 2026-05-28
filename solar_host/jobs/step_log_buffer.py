@@ -51,7 +51,7 @@ class StepLogBuffer:
     ) -> None:
         """Append one log line to the deque and enqueue for emission."""
         key = (job_id, step_name)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
 
         with self._lock:
             if key not in self._buffers:
@@ -70,7 +70,7 @@ class StepLogBuffer:
             "step_index": step_index,
             "stream": stream,
             "seq": seq,
-            "timestamp": now,
+            "timestamp": now.isoformat(),
             "line": line,
         }
         try:
@@ -87,7 +87,7 @@ class StepLogBuffer:
     ) -> None:
         """Enqueue a completion marker entry for this step."""
         key = (job_id, step_name)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
 
         with self._lock:
             seq = self._seqs.get(key, 0)
@@ -111,7 +111,7 @@ class StepLogBuffer:
             "step_index": step_index,
             "stream": "stdout",
             "seq": seq,
-            "timestamp": now,
+            "timestamp": now.isoformat(),
             "line": "",
             "completed": True,
             "exit_code": exit_code,

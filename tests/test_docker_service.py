@@ -659,3 +659,53 @@ def test_stream_logs_demux_passes_demux_param_to_docker():
 
     kwargs = mock_container.logs.call_args[1]
     assert kwargs.get("demux") is True
+
+
+# ---------------------------------------------------------------------------
+# Auto-pull on ImageNotFound
+# ---------------------------------------------------------------------------
+
+
+def test_create_container_auto_pulls_when_image_not_found():
+    """When the image is not found locally, pull_image is attempted and the
+    container is re-created.  On success the container ID is returned."""
+    client = MagicMock()
+    client.info.return_value = {}
+
+    # First create → ImageNotFound (triggers pull + retry).
+    # Second create → succeeds.
+    mock_c1 = MagicMock()
+    mock_c1.id = "pulled-container-id"
+    client.containers.create.side_effect = [
+        _docker_errors.ImageNotFound("not found"),
+        mock_c1,
+    ]
+
+    svc = _make_service(client)
+    cid = svc.create_container(
+        image="missing/image:latest",
+        job_id="job-1",
+        step_name="train",
+        environment={},
+    )
+    assert cid == "pulled-container-id"
+    client.images.pull.assert_called_once_with("missing/image:latest", tag=None)
+    assert client.containers.create.call_count == 2
+
+
+def test_create_container_auto_pull_failure_raises_container_start_error():
+    """If both the initial create AND the pull fail, ContainerStartError is raised."""
+    client = MagicMock()
+    client.info.return_value = {}
+    client.containers.create.side_effect = _docker_errors.ImageNotFound("not found")
+    client.images.pull.side_effect = _docker_errors.APIError("registry down")
+
+    svc = _make_service(client)
+    with pytest.raises(ContainerStartError) as exc_info:
+        svc.create_container(
+            image="bad/image:latest",
+            job_id="job-1",
+            step_name="train",
+            environment={},
+        )
+    assert "pull failed" in str(exc_info.value).lower()
