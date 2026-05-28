@@ -301,8 +301,8 @@ class JobStepExecutor:
                         job_id, step_name, step_index, stream_tag, chunk
                     )
         except Exception:
-            logger.warning(
-                "Log streaming failed for container %s → %s", container_id, log_path
+            logger.debug(
+                "Log streaming finished for container %s → %s", container_id, log_path
             )
 
     @staticmethod
