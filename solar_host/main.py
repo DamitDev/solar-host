@@ -52,6 +52,11 @@ async def lifespan(app: FastAPI):
     ensure_jobs_dir()
     logger.info("Jobs directory: %s", settings.jobs_dir)
 
+    # Load persisted job store from disk so retention cleanup works across
+    # host restarts.  Stale non-terminal jobs are marked as failed.
+    job_store.store_dir = settings.jobs_dir
+    job_store.load()
+
     # Resolve HF cache directory to absolute so all mount paths are stable.
     settings.hf_cache_dir = str(Path(settings.hf_cache_dir).resolve())
     Path(settings.hf_cache_dir).mkdir(parents=True, exist_ok=True)
