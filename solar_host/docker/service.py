@@ -163,7 +163,8 @@ class DockerService:
                 self.pull_image(image)
             except ImagePullError as pull_exc:
                 raise ContainerStartError(
-                    container_name, f"Image {image!r} not found and pull failed: {pull_exc}"
+                    container_name,
+                    f"Image {image!r} not found and pull failed: {pull_exc}",
                 ) from pull_exc
             container = self._client.containers.create(
                 image,

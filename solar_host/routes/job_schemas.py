@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -115,9 +114,7 @@ class JobStateResponse(BaseModel):
     status: str = Field(examples=["completed"])
     steps: list[StepStateResponse] = []
     current_step_index: int = Field(examples=[0])
-    workspace_path: str = Field(
-        examples=["/opt/projects/solar-host/jobs/job-abc123"]
-    )
+    workspace_path: str = Field(examples=["/opt/projects/solar-host/jobs/job-abc123"])
     created_at: Any = None
     started_at: Any = None
     finished_at: Any = None
