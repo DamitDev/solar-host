@@ -13,7 +13,7 @@
       ],
       "priority": 1,
       "passes": false,
-      "notes": "Supervisor handles git commit/push per workflow; agent creates branch only."
+      "notes": "Supervisor task — agent does not commit/push. Branch creation is pending supervisor action."
     },
     {
       "id": "US-002",
@@ -29,8 +29,8 @@
         "Export public types from solar_host/resources/__init__.py"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "All models implemented in solar_host/resources/models.py and exported from __init__.py."
     },
     {
       "id": "US-003",
@@ -45,8 +45,8 @@
         "Blocking Docker/pynvml/psutil calls are suitable for asyncio.to_thread from async callers"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "VRAM via pynvml per-process accounting; container.stats() is RAM/CPU only."
+      "passes": true,
+      "notes": "get_gpu_process_memory() added to memory_monitor.py; container_stats() added to DockerService; usage.py fully implemented with all async wrappers."
     },
     {
       "id": "US-004",
@@ -64,8 +64,8 @@
         "Reservations are in-memory only (no disk persistence)"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "Capacity rejection uses 409; running release uses 409."
+      "passes": true,
+      "notes": "Full implementation in manager.py including CapacityExceededError, ReservationRunningError, refresh_usage_async(), and cleanup_expired()."
     },
     {
       "id": "US-005",
@@ -84,8 +84,8 @@
         "Central error-to-HTTP mapping helper mirrors routes/jobs.py patterns"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "Intended caller: Solar Control only; SuperNova must not call directly."
+      "passes": true,
+      "notes": "All endpoints implemented in solar_host/routes/resources.py with correct status codes and error bodies."
     },
     {
       "id": "US-006",
@@ -100,8 +100,8 @@
         "Host remains usable when Docker is unavailable (snapshots work; running-job actuals may stay None)"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "main.py updated with ResourceManager in app.state, both background loops started and cancelled on shutdown, router included."
     },
     {
       "id": "US-007",
@@ -114,8 +114,8 @@
         "Existing memory and disk fields remain unchanged for backward compatibility"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "Per-reservation enumeration stays on GET /resources only."
+      "passes": true,
+      "notes": "send_health() and broadcast_health() accept optional resource_manager; emits reservations block with per-dimension fields and active_count. Existing fields untouched."
     },
     {
       "id": "US-008",
@@ -133,8 +133,8 @@
         "One API-key auth smoke test inherited from middleware"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "49 new tests across test_resources_manager.py, test_resources_routes.py, test_resources_usage.py. All 383 tests pass."
     },
     {
       "id": "US-009",
@@ -146,8 +146,8 @@
         "uv run pytest -q passes with no regressions in existing job or memory tests"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ruff check: all checks passed. ruff format: 3 pre-existing files (solar_host/config.py, tests/test_docker_service.py, tests/test_pull.py) not touched by S-034 would reformat — all S-034 files are formatted. pytest: 383 passed, 0 failed, no regressions."
     },
     {
       "id": "US-010",
@@ -160,8 +160,8 @@
         "Provide PR body per AGENTS.md with summary, changes list, and Closes #S-034"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": "Agent does not commit or push; supervisor creates the PR."
+      "passes": true,
+      "notes": "README section added. PR title and body provided in progress.txt."
     }
   ]
 }

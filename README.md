@@ -847,3 +847,140 @@ curl -s "$HOST/jobs/demo-001" -H "X-API-Key: $API_KEY" | jq .status
 # Cancel (if still running)
 curl -s -X DELETE "$HOST/jobs/demo-001" -H "X-API-Key: $API_KEY" | jq .
 ```
+
+---
+
+## Resource Reservations (S-034)
+
+Solar Host exposes a host-local reservation ledger so Solar Control can
+pre-claim VRAM/RAM/disk capacity before placing a training job, without
+over-committing a host. All state is **in-memory only** — reservations do not
+survive a host restart.
+
+### Accounting formula
+
+For each dimension `d` (VRAM, RAM, disk):
+
+```
+reported_usage_d = system.usage_d + Σ_i max(reservation_i.reserved_d − reservation_i.actual_d ?? 0, 0)
+available_d      = total_d − reported_usage_d
+```
+
+`system.usage_d` is the live measured system usage (pynvml for VRAM, psutil
+for RAM, shutil for disk).  For a **pending** reservation `actual` is null so
+the full reserved amount counts as headroom.  For a **running** reservation
+only the unconsumed headroom `max(reserved − actual, 0)` is added, so real
+consumption captured in `system.usage` is never double-counted.
+
+A reservation is **running** iff the linked `job_id` exists in the local
+`JobStore` with `status == running`.
+
+### Endpoints
+
+| Method | Path | Success | Description |
+|--------|------|---------|-------------|
+| `POST` | `/resources/reservations` | 201 | Create a reservation |
+| `GET` | `/resources/` | 200 | Snapshot: capacity + reservation list |
+| `DELETE` | `/resources/reservations/{id}` | 200 | Release a reservation |
+
+All endpoints require the `X-API-Key` header (inherited from global middleware).
+
+#### POST `/resources/reservations`
+
+Request body (`ReservationRequest`):
+
+```json
+{
+  "job_id": "job-abc123",
+  "workload_type": "training",
+  "vram_gb": 16.0,
+  "ram_gb": 8.0,
+  "disk_gb": 50.0,
+  "ttl_seconds": 3600
+}
+```
+
+- `ttl_seconds` or `expires_at` may be specified (not both); omit for no expiry.
+- Returns **201** `ReservationView` on success.
+- Returns **409** `{"error": "capacity_exceeded", "dimension": "vram", "requested_gb": …, "available_gb": …}` when the request would exceed available capacity.
+- Returns **422** for invalid request body.
+
+#### GET `/resources/`
+
+Returns a `ResourceSnapshot` with per-dimension availability and the full
+reservation list including per-job actual usage (for running reservations):
+
+```json
+{
+  "memory_type": "VRAM",
+  "vram": {"total_gb": 24.0, "system_used_gb": 8.0, "reserved_headroom_gb": 4.0, "reported_used_gb": 12.0, "available_gb": 12.0},
+  "ram":  {"total_gb": 64.0, "system_used_gb": 12.0, "reserved_headroom_gb": 4.0, "reported_used_gb": 16.0, "available_gb": 48.0},
+  "disk": {"total_gb": 500.0, "system_used_gb": 100.0, "reserved_headroom_gb": 20.0, "reported_used_gb": 120.0, "available_gb": 380.0},
+  "reservations": [
+    {
+      "id": "res-<hex>",
+      "job_id": "job-abc123",
+      "workload_type": "training",
+      "status": "pending",
+      "vram_gb": 16.0,
+      "ram_gb": 8.0,
+      "actual_vram_gb": null,
+      "actual_ram_gb": null,
+      "expires_at": "2024-01-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+#### DELETE `/resources/reservations/{id}`
+
+- Returns **200** `{"detail": "released", "id": "<id>"}` on success.
+- Returns **404** for unknown IDs.
+- Returns **409** when the linked job is currently running (running reservations
+  must not be released while the job holds real capacity).
+
+### Background loops
+
+Two background tasks are started alongside the existing `health_report_loop`:
+
+| Loop | Interval | Action |
+|------|----------|--------|
+| `resource_usage_poll_loop` | 10 s | Refreshes per-job actual VRAM/RAM/disk for running reservations |
+| `reservation_cleanup_loop` | 60 s | Removes expired non-running reservations |
+
+### `host_health` payload extension
+
+The `host_health` Socket.IO event now includes a `reservations` block:
+
+```json
+{
+  "reservations": {
+    "active_count": 2,
+    "vram": {"total_gb": 24.0, "system_used_gb": 8.0, "reserved_headroom_gb": 4.0, "reported_used_gb": 12.0, "available_gb": 12.0},
+    "ram":  {...},
+    "disk": {...}
+  }
+}
+```
+
+Per-reservation details are omitted from the event (decision O4); use
+`GET /resources/` to enumerate reservations.
+
+### Example curl commands
+
+```bash
+API_KEY="your-secret-key-here"
+HOST="http://localhost:8001"
+
+# Create a reservation
+curl -s -X POST "$HOST/resources/reservations" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"job_id": "job-001", "workload_type": "training", "vram_gb": 16.0, "ram_gb": 8.0, "ttl_seconds": 3600}' | jq .
+
+# Check current availability
+curl -s "$HOST/resources/" -H "X-API-Key: $API_KEY" | jq '{memory_type, vram: .vram.available_gb, ram: .ram.available_gb}'
+
+# Release the reservation
+curl -s -X DELETE "$HOST/resources/reservations/res-<id>" -H "X-API-Key: $API_KEY" | jq .
+```

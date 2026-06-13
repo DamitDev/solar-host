@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
@@ -12,7 +13,7 @@ from solar_host.config import settings
 from solar_host.models.base import BackendType
 from solar_host.models_manager import ensure_models_dir, get_models_dir
 from solar_host.process_manager import process_manager
-from solar_host.routes import instances, jobs, models, websockets
+from solar_host.routes import instances, jobs, models, websockets, resources
 from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 from solar_host.jobs import JobExecutor, cleanup_loop, job_store
 from solar_host.jobs.step_log_buffer import step_log_flush_loop
@@ -21,18 +22,47 @@ from solar_host.jobs.workspace import ensure_jobs_dir
 logger = logging.getLogger(__name__)
 
 
-async def health_report_loop():
+async def health_report_loop(app: FastAPI):
     """Periodically send health updates to all connected solar-controls."""
     while True:
         try:
             await asyncio.sleep(10)  # Report every 10 seconds
             clients = get_clients()
             if any(c.is_connected for c in clients):
-                await broadcast_health()
+                rm = getattr(app.state, "resource_manager", None)
+                await broadcast_health(resource_manager=rm)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.warning("Health report error: %s", e)
+
+
+async def resource_usage_poll_loop(app: FastAPI, interval: float = 10.0):
+    """Refresh actual resource usage for running reservations every *interval* seconds."""
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            manager = getattr(app.state, "resource_manager", None)
+            if manager is not None:
+                await manager.refresh_usage_async()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("resource_usage_poll_loop error: %s", exc)
+
+
+async def reservation_cleanup_loop(app: FastAPI, interval: float = 60.0):
+    """Remove expired non-running reservations every *interval* seconds."""
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            manager = getattr(app.state, "resource_manager", None)
+            if manager is not None:
+                manager.cleanup_expired(now=datetime.now(UTC))
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("reservation_cleanup_loop error: %s", exc)
 
 
 @asynccontextmanager
@@ -85,6 +115,19 @@ async def lifespan(app: FastAPI):
         app.state.job_executor = None
         app.state.job_store = job_store
 
+    # --- Resource reservation layer (S-034) ---
+    from solar_host.resources.manager import ResourceManager
+
+    resource_manager = ResourceManager(
+        job_store=job_store,
+        docker_service=docker_service,
+        job_executor=job_executor,
+        jobs_dir=settings.jobs_dir,
+    )
+    app.state.resource_manager = resource_manager
+    resource_usage_task: asyncio.Task | None = None
+    reservation_cleanup_task: asyncio.Task | None = None
+
     clients = init_clients(settings)
     health_task = None
     watchdog_task = None
@@ -95,7 +138,9 @@ async def lifespan(app: FastAPI):
         loop = asyncio.get_running_loop()
         process_manager.ensure_flush_loop(loop)
         step_log_task = asyncio.create_task(step_log_flush_loop())
-        health_task = asyncio.create_task(health_report_loop())
+        health_task = asyncio.create_task(health_report_loop(app))
+        resource_usage_task = asyncio.create_task(resource_usage_poll_loop(app))
+        reservation_cleanup_task = asyncio.create_task(reservation_cleanup_loop(app))
         logger.info(
             "Solar Control WebSocket client(s) started (%d connection(s))", len(clients)
         )
@@ -143,6 +188,20 @@ async def lifespan(app: FastAPI):
         health_task.cancel()
         try:
             await health_task
+        except asyncio.CancelledError:
+            pass
+
+    if resource_usage_task:
+        resource_usage_task.cancel()
+        try:
+            await resource_usage_task
+        except asyncio.CancelledError:
+            pass
+
+    if reservation_cleanup_task:
+        reservation_cleanup_task.cancel()
+        try:
+            await reservation_cleanup_task
         except asyncio.CancelledError:
             pass
 
@@ -207,6 +266,7 @@ app.include_router(instances.router)
 app.include_router(models.router)
 app.include_router(websockets.router)
 app.include_router(jobs.router)
+app.include_router(resources.router)
 
 
 # Customize OpenAPI schema to add security

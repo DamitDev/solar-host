@@ -333,8 +333,18 @@ class SolarControlClient:
         """Send a batch of instance state updates to solar-control."""
         await self._emit("instance_state_batch", {"entries": entries})
 
-    async def send_health(self, memory: Optional[Dict[str, Any]] = None):
-        """Send host health/memory update to solar-control."""
+    async def send_health(
+        self,
+        memory: Optional[Dict[str, Any]] = None,
+        resource_manager: Optional[Any] = None,
+    ):
+        """Send host health/memory update to solar-control.
+
+        The optional *resource_manager* is the ``ResourceManager`` instance
+        stored in ``app.state``.  When provided a ``reservations`` block is
+        added to the health payload (per-dimension totals + active count only —
+        no per-reservation list, per decision O4).
+        """
         from solar_host.memory_monitor import (
             get_memory_info,
             detect_gpu_type,
@@ -366,6 +376,29 @@ class SolarControlClient:
             health_data["disk_total_gb"] = disk["total_gb"]
             health_data["disk_used_gb"] = disk["used_gb"]
             health_data["disk_available_gb"] = disk["available_gb"]
+
+        if resource_manager is not None:
+            try:
+                snap = await asyncio.to_thread(resource_manager.snapshot)
+                reservations_block: Dict[str, Any] = {
+                    "active_count": len(snap.reservations),
+                }
+                for dim_name, dim in (
+                    ("vram", snap.vram),
+                    ("ram", snap.ram),
+                    ("disk", snap.disk),
+                ):
+                    if dim is not None:
+                        reservations_block[dim_name] = {
+                            "total_gb": dim.total_gb,
+                            "system_used_gb": dim.system_used_gb,
+                            "reserved_headroom_gb": dim.reserved_headroom_gb,
+                            "reported_used_gb": dim.reported_used_gb,
+                            "available_gb": dim.available_gb,
+                        }
+                health_data["reservations"] = reservations_block
+            except Exception as exc:
+                logger.warning("send_health: failed to include reservations: %s", exc)
 
         await self._emit(
             "host_health",
@@ -509,11 +542,14 @@ async def broadcast_instance_state_batch(entries: List[dict]):
         await client.send_instance_state_batch(entries)
 
 
-async def broadcast_health(memory: Optional[Dict[str, Any]] = None):
+async def broadcast_health(
+    memory: Optional[Dict[str, Any]] = None,
+    resource_manager: Optional[Any] = None,
+):
     """Send health update to solar-control."""
     client = get_client()
     if client:
-        await client.send_health(memory)
+        await client.send_health(memory, resource_manager=resource_manager)
 
 
 async def broadcast_instances_update():

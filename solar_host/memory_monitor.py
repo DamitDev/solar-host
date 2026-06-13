@@ -199,6 +199,39 @@ def get_gpu_devices() -> list[dict[str, object]]:
         return []
 
 
+def get_gpu_process_memory() -> dict[int, int]:
+    """Return per-PID GPU memory usage in bytes across all NVIDIA devices.
+
+    Aggregates both compute and graphics processes via pynvml.
+    Returns an empty dict when pynvml is unavailable or no GPUs are detected.
+    """
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+        try:
+            device_count = pynvml.nvmlDeviceGetCount()
+            pid_bytes: dict[int, int] = {}
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+                    pid_bytes[proc.pid] = (
+                        pid_bytes.get(proc.pid, 0) + proc.usedGpuMemory
+                    )
+                try:
+                    for proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle):
+                        pid_bytes[proc.pid] = (
+                            pid_bytes.get(proc.pid, 0) + proc.usedGpuMemory
+                        )
+                except Exception:
+                    pass
+        finally:
+            pynvml.nvmlShutdown()
+        return pid_bytes
+    except Exception:
+        return {}
+
+
 def get_disk_info(path: str) -> Optional[Dict[str, float]]:
     """Return disk usage stats (in GB) for the filesystem containing *path*.
 
