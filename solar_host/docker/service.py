@@ -217,9 +217,10 @@ class DockerService:
             logger.warning("Error removing container %s: %s", container_id, exc)
 
     def container_stats(self, container_id: str) -> dict:
-        """Return a single stats snapshot for *container_id* (non-streaming).
+        """Return a single raw stats snapshot for *container_id* (non-streaming).
 
-        Parses ``memory_stats`` from the Docker stats API.
+        Wraps ``container.stats(stream=False)`` and returns the unparsed dict
+        (``memory_stats``, ``cpu_stats``, ...) as provided by the Docker API.
         Returns an empty dict when the container is not found or an error occurs.
         """
         try:

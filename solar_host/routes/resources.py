@@ -99,7 +99,7 @@ async def create_reservation(req: ReservationRequest, request: Request) -> Any:
 
 
 @router.get(
-    "/",
+    "",
     response_model=ResourceSnapshot,
     summary="Get resource availability and reservations",
 )

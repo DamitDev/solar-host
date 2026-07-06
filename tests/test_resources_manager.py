@@ -72,12 +72,16 @@ def _make_running_job(job_id: str = "job-001") -> JobState:
     )
 
 
-def _make_manager(store: JobStore | None = None) -> ResourceManager:
+def _make_manager(
+    store: JobStore | None = None,
+    default_ttl_seconds: float | None = 86400.0,
+) -> ResourceManager:
     return ResourceManager(
         job_store=store or JobStore(),
         docker_service=None,
         job_executor=None,
         jobs_dir="/tmp/test-jobs",
+        default_ttl_seconds=default_ttl_seconds,
     )
 
 
@@ -360,11 +364,40 @@ class TestExpiryCleanup:
         snap = mgr.snapshot()
         assert any(v.id == res.id for v in snap.reservations)
 
-    def test_no_expiry_reservation_never_cleaned(self):
-        mgr = _make_manager()
+    def test_default_ttl_applied_when_none_provided(self):
+        """A request without ttl/expires_at gets the manager's default TTL."""
+        mgr = _make_manager(default_ttl_seconds=86400.0)
+        res = mgr.create(_make_request())  # no ttl_seconds / expires_at
+        stored = mgr._reservations[res.id]
+        assert stored.expires_at is not None
+        expected = stored.created_at + timedelta(seconds=86400.0)
+        assert abs((stored.expires_at - expected).total_seconds()) < 1.0
+
+    def test_default_ttl_reservation_cleaned_after_expiry(self):
+        mgr = _make_manager(default_ttl_seconds=86400.0)
+        res = mgr.create(_make_request())  # no ttl_seconds
+        # Not yet expired at 12h.
+        assert mgr.cleanup_expired(datetime.now(UTC) + timedelta(hours=12)) == 0
+        # Expired past the 24h default.
+        assert mgr.cleanup_expired(datetime.now(UTC) + timedelta(hours=25)) == 1
+        snap = mgr.snapshot()
+        assert not any(v.id == res.id for v in snap.reservations)
+
+    def test_explicit_ttl_overrides_default_and_is_not_capped(self):
+        """Solar Control can request a longer-lived reservation than the default."""
+        mgr = _make_manager(default_ttl_seconds=86400.0)  # 24h default
+        res = mgr.create(_make_request(ttl_seconds=7 * 86400.0))  # 7 days
+        stored = mgr._reservations[res.id]
+        assert stored.expires_at is not None
+        expected = stored.created_at + timedelta(days=7)
+        assert abs((stored.expires_at - expected).total_seconds()) < 1.0
+        # Still present well past the 24h default.
+        assert mgr.cleanup_expired(datetime.now(UTC) + timedelta(days=2)) == 0
+
+    def test_disabled_default_ttl_never_cleans(self):
+        mgr = _make_manager(default_ttl_seconds=None)
         res = mgr.create(_make_request())  # no ttl_seconds
         far_future = datetime.now(UTC) + timedelta(days=365)
-        removed = mgr.cleanup_expired(far_future)
-        assert removed == 0
+        assert mgr.cleanup_expired(far_future) == 0
         snap = mgr.snapshot()
         assert any(v.id == res.id for v in snap.reservations)

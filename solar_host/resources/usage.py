@@ -26,8 +26,13 @@ async def collect_container_ram_gb(
 ) -> Optional[float]:
     """Return RAM used by *container_id* in GB, or None on failure.
 
-    Subtracts the page cache from the raw ``memory_stats.usage`` value so that
-    only resident working-set memory is counted (mirrors cAdvisor behaviour).
+    Subtracts the reclaimable page cache from the raw ``memory_stats.usage``
+    value so that only resident working-set memory is counted (mirrors
+    cAdvisor behaviour). Handles both cgroup layouts:
+
+    - cgroup v1 exposes ``memory_stats.stats.cache``.
+    - cgroup v2 has no ``cache`` key; the equivalent reclaimable page cache is
+      ``inactive_file`` (matching Kubernetes' working-set definition).
     """
     try:
         stats = await asyncio.to_thread(docker_service.container_stats, container_id)
@@ -35,7 +40,12 @@ async def collect_container_ram_gb(
         usage = mem.get("usage")
         if usage is None:
             return None
-        cache = (mem.get("stats") or {}).get("cache", 0) or 0
+        stats_map = mem.get("stats") or {}
+        if "cache" in stats_map:
+            cache = stats_map.get("cache") or 0
+        else:
+            # cgroup v2: no "cache"; inactive_file is the reclaimable page cache.
+            cache = stats_map.get("inactive_file") or 0
         net_bytes = max(0, usage - cache)
         return round(net_bytes / (1024**3), 4)
     except Exception as exc:

@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # HuggingFace Hub token (optional for public models, required for gated models)
     hf_token: str = ""
 
+    # Resource reservations (S-034)
+    # Default TTL applied when a reservation specifies neither ttl_seconds nor
+    # expires_at. This is a *default*, not a cap — Solar Control may request a
+    # longer-lived reservation by supplying its own ttl_seconds/expires_at.
+    default_reservation_ttl_seconds: float = 86400.0  # 24 hours
+
     # Docker execution layer (S-022)
     jobs_dir: str = "./jobs"
     container_uid: int = 1000

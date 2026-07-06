@@ -231,6 +231,16 @@ class JobExecutor:
         assert result is not None
         return result
 
+    def get_active_container(self, job_id: str) -> str | None:
+        """Return the currently active container ID for *job_id*, or None.
+
+        Public accessor over the internal ``_active_containers`` map so
+        collaborators (e.g. the resource manager) don't reach into private
+        state. Thread-safe.
+        """
+        with self._lock:
+            return self._active_containers.get(job_id)
+
     async def cancel_job(self, job_id: str) -> None:
         """Signal cancellation for *job_id* and stop any active container.
 

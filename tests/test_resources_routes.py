@@ -126,7 +126,7 @@ class TestAuth:
         assert resp.status_code == 401
 
     def test_get_without_key_returns_401(self, client: TestClient):
-        resp = client.get("/resources/")
+        resp = client.get("/resources")
         assert resp.status_code == 401
 
 
@@ -170,6 +170,22 @@ class TestPostReservation:
         )
         assert resp.status_code == 422
 
+    def test_negative_vram_returns_422(self, client: TestClient):
+        resp = client.post(
+            "/resources/reservations",
+            json=_reservation_body(vram_gb=-1.0),
+            headers=_headers(),
+        )
+        assert resp.status_code == 422
+
+    def test_zero_ttl_returns_422(self, client: TestClient):
+        resp = client.post(
+            "/resources/reservations",
+            json=_reservation_body(ttl_seconds=0.0),
+            headers=_headers(),
+        )
+        assert resp.status_code == 422
+
     def test_conflicting_expiry_returns_422(self, client: TestClient):
         body = _reservation_body()
         body["ttl_seconds"] = 60.0
@@ -202,7 +218,7 @@ class TestPostReservation:
 
 class TestGetResources:
     def test_returns_200_with_snapshot_shape(self, client: TestClient):
-        resp = client.get("/resources/", headers=_headers())
+        resp = client.get("/resources", headers=_headers())
         assert resp.status_code == 200
         body = resp.json()
         assert "memory_type" in body
@@ -215,7 +231,7 @@ class TestGetResources:
             json=_reservation_body(),
             headers=_headers(),
         )
-        resp = client.get("/resources/", headers=_headers())
+        resp = client.get("/resources", headers=_headers())
         body = resp.json()
         assert len(body["reservations"]) == 1
         assert body["reservations"][0]["job_id"] == "job-001"
@@ -231,7 +247,7 @@ class TestGetResources:
         assert post_resp.status_code == 201
 
         store.add(_make_running_job("job-running"))
-        resp = client.get("/resources/", headers=_headers())
+        resp = client.get("/resources", headers=_headers())
         body = resp.json()
         reservation_view = next(
             v for v in body["reservations"] if v["job_id"] == "job-running"

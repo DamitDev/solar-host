@@ -880,7 +880,7 @@ A reservation is **running** iff the linked `job_id` exists in the local
 | Method | Path | Success | Description |
 |--------|------|---------|-------------|
 | `POST` | `/resources/reservations` | 201 | Create a reservation |
-| `GET` | `/resources/` | 200 | Snapshot: capacity + reservation list |
+| `GET` | `/resources` | 200 | Snapshot: capacity + reservation list |
 | `DELETE` | `/resources/reservations/{id}` | 200 | Release a reservation |
 
 All endpoints require the `X-API-Key` header (inherited from global middleware).
@@ -900,12 +900,17 @@ Request body (`ReservationRequest`):
 }
 ```
 
-- `ttl_seconds` or `expires_at` may be specified (not both); omit for no expiry.
+- `ttl_seconds` or `expires_at` may be specified (not both). When **neither** is
+  given, a default TTL (`default_reservation_ttl_seconds`, **24 h** by default)
+  is applied so abandoned reservations can't hold capacity forever. This is a
+  default, **not a cap** — Solar Control may set a longer-lived reservation by
+  supplying its own `ttl_seconds`/`expires_at`.
+- `vram_gb`/`ram_gb`/`disk_gb` must be `>= 0`; `ttl_seconds` (when given) must be `> 0`.
 - Returns **201** `ReservationView` on success.
 - Returns **409** `{"error": "capacity_exceeded", "dimension": "vram", "requested_gb": …, "available_gb": …}` when the request would exceed available capacity.
 - Returns **422** for invalid request body.
 
-#### GET `/resources/`
+#### GET `/resources`
 
 Returns a `ResourceSnapshot` with per-dimension availability and the full
 reservation list including per-job actual usage (for running reservations):
@@ -964,7 +969,7 @@ The `host_health` Socket.IO event now includes a `reservations` block:
 ```
 
 Per-reservation details are omitted from the event (decision O4); use
-`GET /resources/` to enumerate reservations.
+`GET /resources` to enumerate reservations.
 
 ### Example curl commands
 
@@ -979,7 +984,7 @@ curl -s -X POST "$HOST/resources/reservations" \
   -d '{"job_id": "job-001", "workload_type": "training", "vram_gb": 16.0, "ram_gb": 8.0, "ttl_seconds": 3600}' | jq .
 
 # Check current availability
-curl -s "$HOST/resources/" -H "X-API-Key: $API_KEY" | jq '{memory_type, vram: .vram.available_gb, ram: .ram.available_gb}'
+curl -s "$HOST/resources" -H "X-API-Key: $API_KEY" | jq '{memory_type, vram: .vram.available_gb, ram: .ram.available_gb}'
 
 # Release the reservation
 curl -s -X DELETE "$HOST/resources/reservations/res-<id>" -H "X-API-Key: $API_KEY" | jq .

@@ -123,6 +123,7 @@ async def lifespan(app: FastAPI):
         docker_service=docker_service,
         job_executor=job_executor,
         jobs_dir=settings.jobs_dir,
+        default_ttl_seconds=settings.default_reservation_ttl_seconds,
     )
     app.state.resource_manager = resource_manager
     resource_usage_task: asyncio.Task | None = None

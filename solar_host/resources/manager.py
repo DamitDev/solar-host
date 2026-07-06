@@ -77,11 +77,13 @@ class ResourceManager:
         docker_service: Optional["DockerService"],
         job_executor: Optional["JobExecutor"],
         jobs_dir: str = "./jobs",
+        default_ttl_seconds: Optional[float] = 86400.0,
     ) -> None:
         self._job_store = job_store
         self._docker_service = docker_service
         self._job_executor = job_executor
         self._jobs_dir = jobs_dir
+        self._default_ttl_seconds = default_ttl_seconds
         self._reservations: dict[str, Reservation] = {}
         self._lock = threading.Lock()
 
@@ -111,7 +113,9 @@ class ResourceManager:
             ):
                 raise CapacityExceededError("disk", req.disk_gb, snap.disk.available_gb)
 
-            reservation = Reservation.from_request(req, now)
+            reservation = Reservation.from_request(
+                req, now, default_ttl_seconds=self._default_ttl_seconds
+            )
             self._reservations[reservation.id] = reservation
             logger.info("Created reservation %s for job %s", reservation.id, req.job_id)
             return reservation
@@ -315,11 +319,10 @@ class ResourceManager:
 
         assert self._docker_service is not None
         assert self._job_executor is not None
-        active_containers: dict[str, str] = self._job_executor._active_containers
         now = datetime.now(UTC)
 
         for res in running:
-            container_id = active_containers.get(res.job_id)
+            container_id = self._job_executor.get_active_container(res.job_id)
             if container_id is None:
                 continue
 

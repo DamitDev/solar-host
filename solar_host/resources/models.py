@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class WorkloadType(str, Enum):
@@ -22,10 +22,10 @@ class ReservationRequest(BaseModel):
     job_id: str
     requester: Optional[str] = None
     workload_type: WorkloadType = WorkloadType.training
-    vram_gb: float
-    ram_gb: float
-    disk_gb: Optional[float] = None
-    ttl_seconds: Optional[float] = None
+    vram_gb: float = Field(ge=0)
+    ram_gb: float = Field(ge=0)
+    disk_gb: Optional[float] = Field(default=None, ge=0)
+    ttl_seconds: Optional[float] = Field(default=None, gt=0)
     expires_at: Optional[datetime] = None
 
     @model_validator(mode="after")
@@ -57,12 +57,28 @@ class Reservation(BaseModel):
     usage_polled_at: Optional[datetime] = None
 
     @classmethod
-    def from_request(cls, req: ReservationRequest, now: datetime) -> "Reservation":
+    def from_request(
+        cls,
+        req: ReservationRequest,
+        now: datetime,
+        default_ttl_seconds: Optional[float] = None,
+    ) -> "Reservation":
+        """Build a Reservation, resolving its expiry.
+
+        Precedence for ``expires_at``:
+        1. explicit ``req.expires_at``
+        2. ``req.ttl_seconds`` relative to *now*
+        3. ``default_ttl_seconds`` relative to *now* (a default, not a cap —
+           callers that want a longer-lived reservation supply their own
+           ttl_seconds/expires_at)
+        """
         expires_at: Optional[datetime] = None
         if req.expires_at is not None:
             expires_at = req.expires_at
         elif req.ttl_seconds is not None:
             expires_at = now + timedelta(seconds=req.ttl_seconds)
+        elif default_ttl_seconds is not None:
+            expires_at = now + timedelta(seconds=default_ttl_seconds)
         return cls(
             id=f"res-{uuid.uuid4().hex}",
             job_id=req.job_id,

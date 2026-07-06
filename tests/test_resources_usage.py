@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -66,7 +68,23 @@ class TestCollectContainerRamGb:
         docker_svc.container_stats.return_value = {
             "memory_stats": {
                 "usage": int(6.0 * 1024**3),  # 6 GB raw
-                "stats": {"cache": int(2.0 * 1024**3)},  # 2 GB cache
+                "stats": {"cache": int(2.0 * 1024**3)},  # 2 GB cache (cgroup v1)
+            }
+        }
+        result = asyncio.run(collect_container_ram_gb(docker_svc, "cid-abc"))
+        assert result is not None
+        assert result == pytest.approx(4.0, rel=1e-3)
+
+    def test_cgroup_v2_subtracts_inactive_file(self):
+        """cgroup v2 has no 'cache' key — inactive_file is the page cache."""
+        docker_svc = MagicMock()
+        docker_svc.container_stats.return_value = {
+            "memory_stats": {
+                "usage": int(6.0 * 1024**3),  # 6 GB raw
+                "stats": {
+                    "inactive_file": int(2.0 * 1024**3),  # 2 GB reclaimable cache
+                    "active_file": int(1.0 * 1024**3),
+                },
             }
         }
         result = asyncio.run(collect_container_ram_gb(docker_svc, "cid-abc"))
@@ -118,7 +136,7 @@ class TestCollectContainerVramGb:
         assert result is not None
         assert result == pytest.approx(3.5, rel=1e-3)
 
-    def test_no_gpu_memory_returns_zero(self):
+    def test_no_gpu_memory_returns_none(self):
         docker_svc = MagicMock()
         container_mock = MagicMock()
         container_mock.attrs = {"State": {"Pid": 1000}}
@@ -152,6 +170,35 @@ class TestCollectContainerVramGb:
 # ---------------------------------------------------------------------------
 # _get_container_pid
 # ---------------------------------------------------------------------------
+
+
+class TestGpuProcessMemorySentinel:
+    """get_gpu_process_memory must discard NVML sentinel / None values so a
+    process whose per-PID memory is unavailable doesn't inflate the total."""
+
+    def test_sentinel_and_none_values_excluded(self, monkeypatch):
+        from solar_host.memory_monitor import get_gpu_process_memory
+
+        class _Proc:
+            def __init__(self, pid: int, mem) -> None:
+                self.pid = pid
+                self.usedGpuMemory = mem
+
+        fake = types.ModuleType("pynvml")
+        fake.nvmlInit = lambda: None
+        fake.nvmlShutdown = lambda: None
+        fake.nvmlDeviceGetCount = lambda: 1
+        fake.nvmlDeviceGetHandleByIndex = lambda i: object()
+        fake.nvmlDeviceGetComputeRunningProcesses = lambda h: [
+            _Proc(100, 2 * 1024**3),  # valid
+            _Proc(101, 2**64 - 1),  # NVML_VALUE_NOT_AVAILABLE sentinel
+            _Proc(102, None),  # binding returned None
+        ]
+        fake.nvmlDeviceGetGraphicsRunningProcesses = lambda h: []
+        monkeypatch.setitem(sys.modules, "pynvml", fake)
+
+        result = get_gpu_process_memory()
+        assert result == {100: 2 * 1024**3}
 
 
 class TestGetContainerPid:
