@@ -661,7 +661,9 @@ class ProcessManager:
             config=config,
             status=InstanceStatus.STOPPED,
             supported_endpoints=supported_endpoints,
-            priority=InstancePriority(priority) if priority else InstancePriority.PRODUCTION,
+            priority=(
+                InstancePriority(priority) if priority else InstancePriority.PRODUCTION
+            ),
             managed_by=managed_by,
             intent_id=intent_id,
         )

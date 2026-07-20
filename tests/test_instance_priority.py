@@ -28,7 +28,11 @@ class TestInstancePriorityDefault:
     def test_default_is_production(self):
         instance = Instance(
             id="test-default",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
         )
         assert instance.priority == InstancePriority.PRODUCTION
 
@@ -37,7 +41,11 @@ class TestInstancePriorityDefault:
         with pytest.raises(ValidationError):
             Instance(
                 id="test-none",
-                config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+                config={
+                    "backend_type": "llamacpp",
+                    "model": "/tmp/test.gguf",
+                    "alias": "test",
+                },
                 priority=None,
             )
 
@@ -46,7 +54,11 @@ class TestInstancePriorityDefault:
         instance = Instance.model_validate(
             {
                 "id": "test-omitted",
-                "config": {"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+                "config": {
+                    "backend_type": "llamacpp",
+                    "model": "/tmp/test.gguf",
+                    "alias": "test",
+                },
             }
         )
         assert instance.priority == InstancePriority.PRODUCTION
@@ -58,7 +70,11 @@ class TestExplicitPriority:
     def test_staging(self):
         instance = Instance(
             id="test-staging",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             priority=InstancePriority.STAGING,
         )
         assert instance.priority == InstancePriority.STAGING
@@ -66,7 +82,11 @@ class TestExplicitPriority:
     def test_ephemeral(self):
         instance = Instance(
             id="test-ephemeral",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             priority=InstancePriority.EPHEMERAL,
         )
         assert instance.priority == InstancePriority.EPHEMERAL
@@ -74,7 +94,11 @@ class TestExplicitPriority:
     def test_production_explicit(self):
         instance = Instance(
             id="test-prod",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             priority=InstancePriority.PRODUCTION,
         )
         assert instance.priority == InstancePriority.PRODUCTION
@@ -86,7 +110,11 @@ class TestOwnershipFields:
     def test_defaults_are_none(self):
         instance = Instance(
             id="test-own-default",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
         )
         assert instance.managed_by is None
         assert instance.intent_id is None
@@ -94,7 +122,11 @@ class TestOwnershipFields:
     def test_explicit_managed(self):
         instance = Instance(
             id="test-managed",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             managed_by="intent",
             intent_id="abc-123",
         )
@@ -105,7 +137,11 @@ class TestOwnershipFields:
         """managed_by can be set without intent_id (future use)."""
         instance = Instance(
             id="test-managed-only",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             managed_by="intent",
         )
         assert instance.managed_by == "intent"
@@ -119,7 +155,11 @@ class TestPriorityValidation:
         with pytest.raises(ValidationError):
             Instance(
                 id="test-invalid",
-                config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+                config={
+                    "backend_type": "llamacpp",
+                    "model": "/tmp/test.gguf",
+                    "alias": "test",
+                },
                 priority="dev",
             )
 
@@ -130,7 +170,11 @@ class TestSerialization:
     def test_json_serialization(self):
         instance = Instance(
             id="test-serialize",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             priority=InstancePriority.STAGING,
             managed_by="intent",
             intent_id="abc-123",
@@ -144,7 +188,11 @@ class TestSerialization:
         """model_dump(mode='json') → model_validate roundtrips."""
         instance = Instance(
             id="test-roundtrip",
-            config={"backend_type": "llamacpp", "model": "/tmp/test.gguf", "alias": "test"},
+            config={
+                "backend_type": "llamacpp",
+                "model": "/tmp/test.gguf",
+                "alias": "test",
+            },
             priority=InstancePriority.EPHEMERAL,
             managed_by="intent",
             intent_id="xyz-789",

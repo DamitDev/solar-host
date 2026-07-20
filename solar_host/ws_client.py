@@ -279,7 +279,9 @@ class SolarControlClient:
                     "backend_type": getattr(
                         instance.config, "backend_type", "llamacpp"
                     ),
-                    "priority": instance.priority.value if instance.priority else "production",
+                    "priority": (
+                        instance.priority.value if instance.priority else "production"
+                    ),
                     "managed_by": instance.managed_by,
                     "intent_id": instance.intent_id,
                 }
@@ -430,7 +432,9 @@ class SolarControlClient:
                     "backend_type": getattr(
                         instance.config, "backend_type", "llamacpp"
                     ),
-                    "priority": instance.priority.value if instance.priority else "production",
+                    "priority": (
+                        instance.priority.value if instance.priority else "production"
+                    ),
                     "managed_by": instance.managed_by,
                     "intent_id": instance.intent_id,
                 }
