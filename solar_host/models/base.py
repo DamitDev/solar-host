@@ -34,6 +34,14 @@ class InstancePhase(str, Enum):
     GENERATING = "generating"
 
 
+class InstancePriority(str, Enum):
+    """Priority level for inference instances (S-036)."""
+
+    PRODUCTION = "production"
+    STAGING = "staging"
+    EPHEMERAL = "ephemeral"
+
+
 class LogMessage(BaseModel):
     """Log message with sequence number."""
 
@@ -120,6 +128,20 @@ class Instance(BaseModel):
     error_message: Optional[str] = None
     retry_count: int = 0
 
+    # Priority and ownership (S-036)
+    priority: InstancePriority = Field(
+        default=InstancePriority.PRODUCTION,
+        description="Instance priority for placement and eviction decisions",
+    )
+    managed_by: Optional[str] = Field(
+        default=None,
+        description="Owner subsystem (e.g. 'intent' for reconciler-managed instances)",
+    )
+    intent_id: Optional[str] = Field(
+        default=None,
+        description="Owning intent ID (set iff managed_by == 'intent')",
+    )
+
     # Supported API endpoints for this instance (populated by backend runner)
     supported_endpoints: List[str] = Field(default_factory=list)
 
@@ -136,6 +158,9 @@ class InstanceCreate(BaseModel):
     """
 
     config: Any  # InstanceConfig
+    priority: Optional[str] = None
+    managed_by: Optional[str] = None
+    intent_id: Optional[str] = None
 
 
 class InstanceUpdate(BaseModel):

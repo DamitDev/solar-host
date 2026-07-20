@@ -8,6 +8,7 @@ from solar_host.models.base import (
     BackendType,
     InstanceStatus,
     InstancePhase,
+    InstancePriority,
     Instance,
     InstanceCreate,
     InstanceUpdate,
@@ -45,6 +46,7 @@ __all__ = [
     "BackendType",
     "InstanceStatus",
     "InstancePhase",
+    "InstancePriority",
     # Config types
     "InstanceConfig",
     "LlamaCppConfig",

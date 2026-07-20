@@ -7,6 +7,7 @@ from solar_host.models import (
     InstanceUpdate,
     InstanceResponse,
     InstanceStatus,
+    InstancePriority,
     InstanceRuntimeState,
     GenerationMetrics,
     LogMessage,
@@ -20,8 +21,21 @@ router = APIRouter(prefix="/instances", tags=["instances"])
 @router.post("", response_model=InstanceResponse)
 async def create_instance(data: InstanceCreate):
     """Create a new model instance (llama.cpp or HuggingFace)"""
+    # Validate priority if provided (S-036)
+    VALID_PRIORITIES = {p.value for p in InstancePriority}
+    if data.priority is not None and data.priority not in VALID_PRIORITIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid priority '{data.priority}'. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}",
+        )
+
     try:
-        instance = process_manager.create_instance(data.config)
+        instance = process_manager.create_instance(
+            data.config,
+            priority=data.priority,
+            managed_by=data.managed_by,
+            intent_id=data.intent_id,
+        )
         return InstanceResponse(
             instance=instance, message=f"Instance {instance.id} created successfully"
         )

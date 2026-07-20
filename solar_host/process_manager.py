@@ -18,6 +18,7 @@ import threading
 from solar_host.models import (
     Instance,
     InstanceStatus,
+    InstancePriority,
     LogMessage,
     InstanceRuntimeState,
     InstanceStateEvent,
@@ -628,7 +629,13 @@ class ProcessManager:
         await asyncio.sleep(1)
         return await self.start_instance(instance_id)
 
-    def create_instance(self, config) -> Instance:
+    def create_instance(
+        self,
+        config,
+        priority: str | None = None,
+        managed_by: str | None = None,
+        intent_id: str | None = None,
+    ) -> Instance:
         """Create a new instance."""
         # Parse config if it's a dict (from FastAPI request body)
         if isinstance(config, dict):
@@ -654,6 +661,9 @@ class ProcessManager:
             config=config,
             status=InstanceStatus.STOPPED,
             supported_endpoints=supported_endpoints,
+            priority=InstancePriority(priority) if priority else InstancePriority.PRODUCTION,
+            managed_by=managed_by,
+            intent_id=intent_id,
         )
         config_manager.add_instance(instance)
 
