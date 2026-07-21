@@ -32,7 +32,9 @@ def test_draft_mtp_speculative_decoding_flags_are_added_together() -> None:
 
 
 def test_speculative_decoding_flags_are_ignored_for_non_generation_models() -> None:
-    command = build_command(model_type="embedding", spec_type="draft-mtp", spec_draft_n_max=2)
+    command = build_command(
+        model_type="embedding", spec_type="draft-mtp", spec_draft_n_max=2
+    )
 
     assert "--spec-type" not in command
     assert "--spec-draft-n-max" not in command
