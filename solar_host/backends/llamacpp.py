@@ -90,6 +90,22 @@ class LlamaCppRunner(BackendRunner):
         if reasoning_budget is not None:
             cmd.extend(["--reasoning-budget", str(int(reasoning_budget))])
 
+        spec_type = getattr(config, "spec_type", None)
+        spec_draft_n_max = getattr(config, "spec_draft_n_max", None)
+        if (
+            getattr(config, "model_type", "llm") == "llm"
+            and spec_type == "draft-mtp"
+            and spec_draft_n_max is not None
+        ):
+            cmd.extend(
+                [
+                    "--spec-type",
+                    spec_type,
+                    "--spec-draft-n-max",
+                    str(int(spec_draft_n_max)),
+                ]
+            )
+
         cache_type_k = getattr(config, "cache_type_k", None)
         if cache_type_k and cache_type_k.strip():
             cmd.extend(["-ctk", cache_type_k.strip()])

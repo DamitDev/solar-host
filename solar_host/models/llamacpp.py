@@ -69,6 +69,15 @@ class LlamaCppConfig(BaseModel):
         default=None,
         description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)",
     )
+    spec_type: Optional[Literal["draft-mtp"]] = Field(
+        default=None,
+        description="Speculative decoding type (passed as --spec-type to llama-server)",
+    )
+    spec_draft_n_max: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Maximum speculative draft tokens (passed as --spec-draft-n-max to llama-server)",
+    )
     cache_type_k: Optional[
         Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
     ] = Field(default=None, description="KV cache quantization type for keys (-ctk)")
