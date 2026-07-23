@@ -160,9 +160,12 @@ def parse_instance_config(config_data: Dict[str, Any]) -> Any:
 
     backend_type = config_data.get("backend_type", "llamacpp")
 
-    # Resolve model_source if present
+    # Resolve model_source if present, but only when no explicit model/model_id
+    # was provided (solar-control resolves model_source and sets model/model_id
+    # before proxying; skip resolution in that case to avoid redundant validation
+    # and preserve the original model_source URI for cross-host operations).
     model_source = config_data.get("model_source")
-    if model_source:
+    if model_source and not config_data.get("model") and not config_data.get("model_id"):
         resolved_path = resolve_model_source(model_source)
         if backend_type == "llamacpp":
             config_data["model"] = resolved_path
