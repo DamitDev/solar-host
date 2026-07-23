@@ -165,7 +165,11 @@ def parse_instance_config(config_data: Dict[str, Any]) -> Any:
     # before proxying; skip resolution in that case to avoid redundant validation
     # and preserve the original model_source URI for cross-host operations).
     model_source = config_data.get("model_source")
-    if model_source and not config_data.get("model") and not config_data.get("model_id"):
+    if (
+        model_source
+        and not config_data.get("model")
+        and not config_data.get("model_id")
+    ):
         resolved_path = resolve_model_source(model_source)
         if backend_type == "llamacpp":
             config_data["model"] = resolved_path
