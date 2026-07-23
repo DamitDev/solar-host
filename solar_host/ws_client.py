@@ -284,6 +284,7 @@ class SolarControlClient:
                     ),
                     "managed_by": instance.managed_by,
                     "intent_id": instance.intent_id,
+                    "model_source": getattr(instance.config, "model_source", None),
                 }
             )
 
@@ -437,6 +438,7 @@ class SolarControlClient:
                     ),
                     "managed_by": instance.managed_by,
                     "intent_id": instance.intent_id,
+                    "model_source": getattr(instance.config, "model_source", None),
                 }
             )
 
