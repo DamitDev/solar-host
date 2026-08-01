@@ -12,6 +12,7 @@ from solar_host.models_manager import (
     ManifestEntry,
     add_manifest_entry,
     ensure_models_dir,
+    extract_repo_subpath,
     get_manifest_entry,
     get_models_dir,
     read_manifest,
@@ -58,10 +59,31 @@ class TestSourceUriToSlug:
             ("repo://iris-osl:v3", "repo--iris-osl--v3"),
             ("repo://iris-tickets:2026-03", "repo--iris-tickets--2026-03"),
             ("repo://IRIS-BERT-base:v1", "repo--IRIS-BERT-base--v1"),
+            # Subpath variant: slug ignores the file path inside the artifact
+            (
+                "repo://iris-osl:v3/model.gguf",
+                "repo--iris-osl--v3",
+            ),
+            (
+                "repo://iris-osl:v3/subdir/model.gguf",
+                "repo--iris-osl--v3",
+            ),
         ],
     )
     def test_repo_scheme(self, uri: str, expected: str):
         assert source_uri_to_slug(uri) == expected
+
+    @pytest.mark.parametrize(
+        "uri, expected",
+        [
+            ("repo://iris-osl:v3", ""),
+            ("repo://iris-osl:v3/model.gguf", "model.gguf"),
+            ("repo://iris-osl:v3/subdir/model.gguf", "subdir/model.gguf"),
+            ("huggingface://microsoft/phi-3", ""),
+        ],
+    )
+    def test_extract_repo_subpath(self, uri: str, expected: str):
+        assert extract_repo_subpath(uri) == expected
 
     @pytest.mark.parametrize(
         "uri, expected",

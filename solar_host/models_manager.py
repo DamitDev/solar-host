@@ -29,7 +29,7 @@ from solar_host.memory_monitor import get_disk_info
 
 logger = logging.getLogger(__name__)
 
-_REPO_PATTERN = re.compile(r"^repo://([A-Za-z0-9\-_]+):([A-Za-z0-9\-_.]+)$")
+_REPO_PATTERN = re.compile(r"^repo://([A-Za-z0-9\-_]+):([A-Za-z0-9\-_.]+)(/.*)?$")
 _HF_PATTERN = re.compile(r"^huggingface://(.+)$")
 
 MANIFEST_FILENAME = "manifest.json"
@@ -81,6 +81,10 @@ def ensure_models_dir() -> None:
 def source_uri_to_slug(uri: str) -> str:
     """Derive a deterministic directory slug from a model source URI.
 
+    For ``repo://name:version/subpath`` the subpath is ignored — the slug
+    is always ``repo--name--version`` (the subpath selects a file inside
+    the pulled artifact directory).
+
     Raises ValueError for local:// URIs (not stored in MODELS_DIR)
     and for unrecognised or malformed URIs.
     """
@@ -98,6 +102,35 @@ def source_uri_to_slug(uri: str) -> str:
         return f"hf--{model_id.replace('/', '--')}"
 
     raise ValueError(f"Unsupported or malformed model source URI: {uri}")
+
+
+def extract_repo_subpath(uri: str) -> str:
+    """Return the subpath of a ``repo://name:version/subpath`` URI.
+
+    Returns the subpath without the leading slash (e.g. ``model.gguf``
+    for ``repo://iris-osl:v3/model.gguf``), or ``""`` when the URI has
+    no subpath or is not a ``repo://`` URI.
+    """
+    if not uri.startswith("repo://"):
+        return ""
+    m = _REPO_PATTERN.match(uri)
+    if m and m.group(3):
+        return m.group(3).lstrip("/")
+    return ""
+
+
+def repo_base_uri(uri: str) -> str:
+    """Strip the subpath from a ``repo://name:version/subpath`` URI.
+
+    Returns ``repo://name:version`` (the artifact identity used as the
+    manifest cache key).  Non-repo URIs are returned unchanged.
+    """
+    if not uri.startswith("repo://"):
+        return uri
+    m = _REPO_PATTERN.match(uri)
+    if m:
+        return f"repo://{m.group(1)}:{m.group(2)}"
+    return uri
 
 
 def _manifest_path() -> Path:
@@ -344,28 +377,36 @@ def pull_model(
             source_uri,
         )
 
-    # Acquire a per-URI lock so that concurrent pulls for the *same* source_uri
-    # are serialised end-to-end.  The second caller will block here, then see
-    # the cache hit once the first caller finishes.
-    uri_lock = _get_uri_lock(source_uri)
+    # Acquire a per-URI lock so that concurrent pulls for the *same* artifact
+    # are serialised end-to-end.  The lock key is the base URI (subpath
+    # stripped) — different subpaths of one artifact share the directory.
+    uri_lock = _get_uri_lock(repo_base_uri(source_uri))
     with uri_lock:
-        # 2. Cache check — manifest is the single source of truth.
-        #    Verify the files still exist on disk; remove stale entries.
-        cached_entry = get_manifest_entry(source_uri)
+        # 2a. Extract optional subpath (repo://name:version/subpath → file
+        #     inside the artifact directory).  The slug stays name:version.
+        subpath = extract_repo_subpath(source_uri)
+        cache_key = repo_base_uri(source_uri)
+
+        # 2. Cache check — manifest is the single source of truth, keyed by
+        #    the base URI (the artifact identity).  Verify the resolved path
+        #    (dir + optional subpath) still exists on disk.
+        cached_entry = get_manifest_entry(cache_key)
         if cached_entry is not None:
-            if Path(cached_entry.path).exists():
+            cached_path = Path(cached_entry.path)
+            resolved_cache = cached_path / subpath if subpath else cached_path
+            if resolved_cache.exists():
                 return {
-                    "path": cached_entry.path,
+                    "path": str(resolved_cache),
                     "cached": True,
                     "source_uri": source_uri,
                 }
             logger.warning(
                 "Manifest entry for %s points to missing path %s, re-pulling",
-                source_uri,
+                cache_key,
                 cached_entry.path,
             )
             with _manifest_lock:
-                remove_manifest_entry(source_uri)
+                remove_manifest_entry(cache_key)
 
         # 3. Derive slug and target directory.
         try:
@@ -476,11 +517,30 @@ def pull_model(
         # 7. Compute size of downloaded files.
         size_bytes = _compute_dir_size(target_dir)
 
+        # 7.5 Resolve the returned path.  When the URI carries a subpath
+        #     (repo://name:version/model.gguf), the returned path points at
+        #     that file inside the pulled directory.  A subpath that does
+        #     not exist in the artifact is a client error (404).
+        if subpath:
+            resolved_path = target_dir / subpath
+            if not resolved_path.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+                raise ModelPullError(
+                    404,
+                    "not_found",
+                    f"Subpath '{subpath}' not found in artifact for {source_uri}.",
+                    source_uri,
+                )
+        else:
+            resolved_path = target_dir
+
         # 8. Update manifest atomically under lock to prevent concurrent write
         #    races between pulls for *different* URIs finishing simultaneously.
+        #    The entry is keyed by the base URI (artifact identity), so any
+        #    subpath of the same artifact resolves against the same entry.
         entry = ManifestEntry(
             slug=slug,
-            source_uri=source_uri,
+            source_uri=cache_key,
             path=str(target_dir.resolve()),
             size_bytes=size_bytes,
             digest=digest,
@@ -494,9 +554,9 @@ def pull_model(
         with _manifest_lock:
             add_manifest_entry(entry)
 
-        logger.info("Model pulled successfully: %s -> %s", source_uri, target_dir)
+        logger.info("Model pulled successfully: %s -> %s", source_uri, resolved_path)
         return {
-            "path": str(target_dir.resolve()),
+            "path": str(resolved_path.resolve()),
             "cached": False,
             "source_uri": source_uri,
         }

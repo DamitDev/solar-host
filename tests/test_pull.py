@@ -273,6 +273,58 @@ class TestCacheHit:
         assert resp.json()["cached"] is True
         mock_dl.assert_not_called()
 
+    def test_cache_hit_with_subpath_returns_file_path(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Cache hit for repo://name:version/model.gguf returns dir/model.gguf."""
+        ensure_models_dir()
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "model.gguf").write_bytes(b"x")
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
+
+        body = _harbor_body(source_uri="repo://iris-osl:v3/model.gguf")
+        with patch("solar_host.models_manager._pull_harbor") as mock_pull:
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is True
+        assert data["path"] == str((slug_dir / "model.gguf").resolve())
+        mock_pull.assert_not_called()
+
+    def test_cache_hit_with_subpath_missing_file_re_pulls(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Cache entry exists but the subpath file is gone → re-pull."""
+        ensure_models_dir()
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "model.gguf").write_bytes(b"x")
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
+
+        body = _harbor_body(source_uri="repo://iris-osl:v3/other.gguf")
+
+        def _side_effect(harbor_ref: str, target_dir: Path, source_uri: str):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            # Re-create the file named by the subpath in source_uri
+            from solar_host.models_manager import extract_repo_subpath
+
+            fname = extract_repo_subpath(source_uri)
+            (target_dir / fname).write_bytes(b"x" * 1024)
+
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=_side_effect,
+        ) as mock_pull:
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is False
+        assert data["path"] == str((slug_dir / "other.gguf").resolve())
+        mock_pull.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Harbor pull (cache miss)
@@ -334,6 +386,44 @@ class TestHarborPull:
 
         assert captured["harbor_ref"] == "imgrepo.damit.hu/supernova/iris-osl:v3"
         assert str(captured["target_dir"]).endswith("repo--iris-osl--v3")
+
+    def test_harbor_pull_with_subpath_returns_file_path(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Fresh pull for repo://name:version/model.gguf returns dir/model.gguf."""
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._make_mock_pull(_isolated_env),
+        ) as mock_pull:
+            body = _harbor_body(source_uri="repo://iris-osl:v3/model.gguf")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is False
+        assert data["path"].endswith("repo--iris-osl--v3/model.gguf")
+        mock_pull.assert_called_once()
+
+    def test_harbor_pull_with_missing_subpath_returns_404(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Subpath not present in the artifact → 404 and directory cleaned up."""
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._make_mock_pull(_isolated_env),
+        ):
+            body = _harbor_body(source_uri="repo://iris-osl:v3/nonexistent.gguf")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 404
+        data = resp.json()
+        assert data["error"] == "not_found"
+        assert "nonexistent.gguf" in data["detail"]
+
+        # The stale directory must have been removed; manifest must be empty.
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        assert not slug_dir.exists()
+        assert get_manifest_entry("repo://iris-osl:v3/nonexistent.gguf") is None
 
     def test_second_pull_returns_cached(self, client: TestClient, _isolated_env: Path):
         """After a successful pull, the same URI returns cached=True."""
