@@ -3,7 +3,12 @@
 import pytest
 from pydantic import ValidationError
 
-from solar_host.models.base import InstancePriority, Instance, InstanceCreate
+from solar_host.models.base import (
+    InstancePriority,
+    Instance,
+    InstanceCreate,
+    InstanceUpdate,
+)
 
 
 class TestInstancePriorityEnum:
@@ -234,3 +239,33 @@ class TestInstanceCreate:
         assert create.priority is None
         assert create.managed_by is None
         assert create.intent_id is None
+
+
+class TestInstanceUpdate:
+    """InstanceUpdate carries optional ownership-marker fields (D-017 disown)."""
+
+    def test_config_only_update(self):
+        update = InstanceUpdate(
+            config={"backend_type": "llamacpp", "model": "/tmp/t.gguf", "alias": "t"},
+        )
+        assert update.config is not None
+        # Not in model_fields_set → markers untouched by the route.
+        assert "managed_by" not in update.model_fields_set
+        assert "intent_id" not in update.model_fields_set
+
+    def test_marker_clearing_update(self):
+        update = InstanceUpdate(
+            config={"backend_type": "llamacpp", "model": "/tmp/t.gguf", "alias": "t"},
+            managed_by=None,
+            intent_id=None,
+        )
+        assert "managed_by" in update.model_fields_set
+        assert "intent_id" in update.model_fields_set
+        assert update.managed_by is None
+        assert update.intent_id is None
+
+    def test_config_optional_for_marker_update(self):
+        update = InstanceUpdate(managed_by=None, intent_id=None)
+        assert update.config is None
+        assert "managed_by" in update.model_fields_set
+        assert "intent_id" in update.model_fields_set

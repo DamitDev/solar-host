@@ -164,12 +164,16 @@ class InstanceCreate(BaseModel):
 
 
 class InstanceUpdate(BaseModel):
-    """Request to update an instance config.
+    """Request to update an instance config or ownership markers.
 
     Note: config field uses Any type here to avoid circular imports.
+    All fields are optional; only explicitly-provided fields are applied
+    (``managed_by``/``intent_id`` may be set to null to clear ownership).
     """
 
-    config: Any  # InstanceConfig
+    config: Optional[Any] = None  # InstanceConfig
+    managed_by: Optional[str] = None
+    intent_id: Optional[str] = None
 
 
 class InstanceResponse(BaseModel):

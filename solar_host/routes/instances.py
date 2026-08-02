@@ -71,12 +71,19 @@ async def update_instance(instance_id: str, data: InstanceUpdate):
         )
 
     try:
-        # Parse config if it's a dict (from FastAPI request body)
-        config = data.config
-        if isinstance(config, dict):
-            config = parse_instance_config(config)
-
-        instance.config = config
+        # Parse config if it's a dict (from FastAPI request body).
+        # Only apply fields explicitly present in the payload, so a
+        # config-only update never clobbers ownership markers and a
+        # marker-clearing update can set them to null (S-037 disown).
+        if data.config is not None:
+            config = data.config
+            if isinstance(config, dict):
+                config = parse_instance_config(config)
+            instance.config = config
+        if "managed_by" in data.model_fields_set:
+            instance.managed_by = data.managed_by
+        if "intent_id" in data.model_fields_set:
+            instance.intent_id = data.intent_id
         config_manager.update_instance(instance_id, instance)
         return InstanceResponse(
             instance=instance, message=f"Instance {instance_id} updated successfully"
