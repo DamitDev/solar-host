@@ -91,3 +91,30 @@ class TestDisownUpdate:
         assert inst["managed_by"] == "intent"
         assert inst["intent_id"] == "intent-123"
         assert inst["config"]["threads"] == 8
+
+    def test_update_pushes_instances_update(self, client: TestClient, monkeypatch):
+        """A marker/config update must push instances_update to solar-control.
+
+        Regression (D-017): without the push, a stale instances_update
+        (e.g. the stop event emitted before a disown) can re-populate
+        ownership markers in solar-control's Redis cache after the disown,
+        and the intent reconciler then sees a surplus managed instance and
+        deletes the disowned source.
+        """
+        import solar_host.process_manager as pm
+
+        instance_id = _create_instance(client)
+        pushed = []
+        monkeypatch.setattr(
+            pm.ProcessManager,
+            "_push_instances_update",
+            lambda self: pushed.append(True),
+        )
+
+        resp = client.put(
+            f"/instances/{instance_id}",
+            headers=_headers(),
+            json={"managed_by": None, "intent_id": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(pushed) == 1, "instances_update must be pushed after update"

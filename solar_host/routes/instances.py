@@ -85,6 +85,13 @@ async def update_instance(instance_id: str, data: InstanceUpdate):
         if "intent_id" in data.model_fields_set:
             instance.intent_id = data.intent_id
         config_manager.update_instance(instance_id, instance)
+        # Push the updated instance list so solar-control's Redis cache
+        # reflects the authoritative post-update state. Without this, a
+        # stale instances_update (e.g. the stop event emitted before a
+        # disown) can re-populate ownership markers after the disown and
+        # the intent reconciler will fight the instance again (surplus
+        # STOP deletes it). (D-017)
+        process_manager._push_instances_update()
         return InstanceResponse(
             instance=instance, message=f"Instance {instance_id} updated successfully"
         )
