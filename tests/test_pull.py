@@ -4,6 +4,7 @@ All external I/O (Harbor OrasHelper, huggingface_hub.snapshot_download) is
 mocked. Filesystem operations use tmp_path so nothing touches the real disk.
 """
 
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -324,6 +325,192 @@ class TestCacheHit:
         assert data["cached"] is False
         assert data["path"] == str((slug_dir / "other.gguf").resolve())
         mock_pull.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Post-pull digest verification (D-017)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOras:
+    """Minimal OrasHelper stand-in: ``_client.get_manifest`` returns layers."""
+
+    def __init__(self, file_digests: dict[str, str], *, fail_manifest: bool = False):
+        self._client = _FakeOrasClient(file_digests, fail_manifest=fail_manifest)
+
+
+class _FakeOrasClient:
+    def __init__(self, file_digests: dict[str, str], *, fail_manifest: bool):
+        self._file_digests = file_digests
+        self._fail_manifest = fail_manifest
+
+    def get_manifest(self, harbor_ref: str) -> dict:
+        if self._fail_manifest:
+            raise RuntimeError("registry unreachable")
+        return {
+            "layers": [
+                {
+                    "digest": f"sha256:{digest}",
+                    "annotations": {
+                        "org.opencontainers.image.title": name
+                    },
+                }
+                for name, digest in self._file_digests.items()
+            ]
+        }
+
+
+class TestDigestVerification:
+    """Pulled artifacts are verified against OCI manifest layer digests."""
+
+    def _artifact_dir(self, _isolated_env: Path) -> Path:
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        return slug_dir
+
+    def test_verify_pulled_digests_happy_path(self, _isolated_env: Path):
+        from solar_host.models_manager import _verify_pulled_digests
+
+        slug_dir = self._artifact_dir(_isolated_env)
+        data = b"x" * 1024
+        (slug_dir / "model.gguf").write_bytes(data)
+        want = hashlib.sha256(data).hexdigest()
+
+        digests = _verify_pulled_digests(
+            _FakeOras({"model.gguf": want}),
+            "imgrepo.damit.hu/supernova/iris-osl:v3",
+            slug_dir,
+            "repo://iris-osl:v3",
+        )
+        assert digests == {"model.gguf": want}
+
+    def test_verify_pulled_digests_detects_tamper(self, _isolated_env: Path):
+        from solar_host.models_manager import ModelPullError, _verify_pulled_digests
+
+        slug_dir = self._artifact_dir(_isolated_env)
+        (slug_dir / "model.gguf").write_bytes(b"y" * 1024)  # tampered
+        want = hashlib.sha256(b"x" * 1024).hexdigest()
+
+        with pytest.raises(ModelPullError) as ei:
+            _verify_pulled_digests(
+                _FakeOras({"model.gguf": want}),
+                "imgrepo.damit.hu/supernova/iris-osl:v3",
+                slug_dir,
+                "repo://iris-osl:v3",
+            )
+        assert "integrity check failed" in str(ei.value)
+        assert "model.gguf" in str(ei.value)
+
+    def test_verify_pulled_digests_detects_missing_file(self, _isolated_env: Path):
+        from solar_host.models_manager import ModelPullError, _verify_pulled_digests
+
+        slug_dir = self._artifact_dir(_isolated_env)  # empty
+        want = hashlib.sha256(b"x" * 1024).hexdigest()
+
+        with pytest.raises(ModelPullError) as ei:
+            _verify_pulled_digests(
+                _FakeOras({"model.gguf": want}),
+                "imgrepo.damit.hu/supernova/iris-osl:v3",
+                slug_dir,
+                "repo://iris-osl:v3",
+            )
+        assert "model.gguf: missing on disk" in str(ei.value)
+
+    def test_verify_pulled_digests_skips_when_manifest_unavailable(
+        self, _isolated_env: Path
+    ):
+        from solar_host.models_manager import _verify_pulled_digests
+
+        slug_dir = self._artifact_dir(_isolated_env)
+        (slug_dir / "model.gguf").write_bytes(b"x" * 1024)
+
+        digests = _verify_pulled_digests(
+            _FakeOras({}, fail_manifest=True),
+            "imgrepo.damit.hu/supernova/iris-osl:v3",
+            slug_dir,
+            "repo://iris-osl:v3",
+        )
+        assert digests is None
+
+    def test_cache_hit_with_matching_digests_returns_cached(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        ensure_models_dir()
+        slug_dir = self._artifact_dir(_isolated_env)
+        data = b"x" * 1024
+        (slug_dir / "model.gguf").write_bytes(data)
+        entry = _make_manifest_entry(path=str(slug_dir.resolve()))
+        entry.file_digests = {"model.gguf": hashlib.sha256(data).hexdigest()}
+        add_manifest_entry(entry)
+
+        with patch("solar_host.models_manager._pull_harbor") as mock_pull:
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["cached"] is True
+        mock_pull.assert_not_called()
+
+    def test_cache_hit_with_corrupt_file_re_pulls(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Corrupt cached artifact -> digest check fires -> re-pull."""
+        ensure_models_dir()
+        slug_dir = self._artifact_dir(_isolated_env)
+        (slug_dir / "model.gguf").write_bytes(b"corrupt!")
+        entry = _make_manifest_entry(path=str(slug_dir.resolve()))
+        entry.file_digests = {"model.gguf": hashlib.sha256(b"original").hexdigest()}
+        add_manifest_entry(entry)
+
+        def _recreate(harbor_ref, target_dir, source_uri):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / "model.gguf").write_bytes(b"x" * 1024)
+
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=_recreate,
+        ) as mock_pull:
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["cached"] is False
+        mock_pull.assert_called_once()
+
+    def test_cache_hit_without_digests_still_cached(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """Pre-D-017 entries (no file_digests) keep the legacy cache behavior."""
+        ensure_models_dir()
+        slug_dir = self._artifact_dir(_isolated_env)
+        (slug_dir / "model.gguf").write_bytes(b"x" * 1024)
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
+
+        with patch("solar_host.models_manager._pull_harbor") as mock_pull:
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["cached"] is True
+        mock_pull.assert_not_called()
+
+    def test_pull_records_file_digests_in_manifest(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        def _pull_with_digests(harbor_ref, target_dir, source_uri):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            data = b"x" * 1024
+            (target_dir / "model.gguf").write_bytes(data)
+            return {"model.gguf": hashlib.sha256(data).hexdigest()}
+
+        with patch(
+            "solar_host.models_manager._pull_harbor", side_effect=_pull_with_digests
+        ):
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+        assert resp.status_code == 200
+
+        entry = get_manifest_entry("repo://iris-osl:v3")
+        assert entry is not None
+        assert entry.file_digests == {
+            "model.gguf": hashlib.sha256(b"x" * 1024).hexdigest()
+        }
 
 
 # ---------------------------------------------------------------------------

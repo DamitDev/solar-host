@@ -228,7 +228,6 @@ class SolarControlClient:
         If we were pending, this means the admin just approved us --
         re-send registration + health so solar-control has fresh data.
         """
-        was_pending = self._pending
         self._pending = False
         self.host_id = data.get("host_id")
         host_name = data.get("host_name", self.host_id)
