@@ -259,7 +259,7 @@ class JobExecutor:
             )
             try:
                 await asyncio.to_thread(self._docker.stop_container, active_container)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning(
                     "Error stopping container %s during cancel of job %r",
                     active_container,

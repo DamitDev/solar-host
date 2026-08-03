@@ -196,9 +196,9 @@ async def test_insufficient_disk_raises_and_fails_job() -> None:
         patch(f"{_EXECUTOR_MODULE}.check_disk_space", side_effect=[None, disk_error]),
         patch(f"{_EXECUTOR_MODULE}.create_workspace", return_value=_WORKSPACE),
         _WORKSPACE_PATCHES[3],
+        pytest.raises(InsufficientDiskError),
     ):
-        with pytest.raises(InsufficientDiskError):
-            await executor.run_job(job_def)
+        await executor.run_job(job_def)
 
     assert store.get(job_def.job_id).status == JobStatus.failed  # type: ignore[union-attr]
 

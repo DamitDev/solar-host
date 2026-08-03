@@ -10,14 +10,14 @@ from fastapi.responses import JSONResponse
 
 from solar_host import __version__
 from solar_host.config import settings
-from solar_host.models.base import BackendType
-from solar_host.models_manager import ensure_models_dir, get_models_dir
-from solar_host.process_manager import process_manager
-from solar_host.routes import instances, jobs, models, websockets, resources
-from solar_host.ws_client import init_clients, get_clients, get_client, broadcast_health
 from solar_host.jobs import JobExecutor, cleanup_loop, job_store
 from solar_host.jobs.step_log_buffer import step_log_flush_loop
 from solar_host.jobs.workspace import ensure_jobs_dir
+from solar_host.models.base import BackendType
+from solar_host.models_manager import ensure_models_dir, get_models_dir
+from solar_host.process_manager import process_manager
+from solar_host.routes import instances, jobs, models, resources, websockets
+from solar_host.ws_client import broadcast_health, get_client, get_clients, init_clients
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def health_report_loop(app: FastAPI):
                 await broadcast_health(resource_manager=rm)
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Health report error: %s", e)
 
 
@@ -47,7 +47,7 @@ async def resource_usage_poll_loop(app: FastAPI, interval: float = 10.0):
                 await manager.refresh_usage_async()
         except asyncio.CancelledError:
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("resource_usage_poll_loop error: %s", exc)
 
 
@@ -61,7 +61,7 @@ async def reservation_cleanup_loop(app: FastAPI, interval: float = 60.0):
                 manager.cleanup_expired(now=datetime.now(UTC))
         except asyncio.CancelledError:
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("reservation_cleanup_loop error: %s", exc)
 
 
@@ -93,8 +93,8 @@ async def lifespan(app: FastAPI):
     logger.info("HF cache directory: %s", settings.hf_cache_dir)
 
     # --- Job execution layer ---
-    from solar_host.docker.service import DockerService
     from solar_host.docker.errors import DaemonUnavailableError
+    from solar_host.docker.service import DockerService
 
     docker_service: DockerService | None = None
     job_executor: JobExecutor | None = None
@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI):
             if job.status == _JobStatus.running:
                 try:
                     await job_executor.cancel_job(job.job_id)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     logger.warning(
                         "Error cancelling job %r during shutdown", job.job_id
                     )
@@ -333,6 +333,7 @@ async def root():
 async def get_memory():
     """Get GPU/RAM memory usage"""
     from fastapi import HTTPException
+
     from solar_host.memory_monitor import get_memory_info
     from solar_host.models import MemoryInfo
 

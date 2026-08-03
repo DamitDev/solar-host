@@ -31,17 +31,17 @@ def _make_job_state(
     **overrides,
 ) -> JobState:
     now = datetime.now(UTC)
-    defaults: dict = dict(
-        job_id=job_id,
-        name="Test Job",
-        status=status,
-        steps=[StepState(name="step1")],
-        current_step_index=-1,
-        workspace_path=f"/tmp/solar-jobs/{job_id}",
-        created_at=now,
-        started_at=now,
-        retention_hours=24.0,
-    )
+    defaults: dict = {
+        "job_id": job_id,
+        "name": "Test Job",
+        "status": status,
+        "steps": [StepState(name="step1")],
+        "current_step_index": -1,
+        "workspace_path": f"/tmp/solar-jobs/{job_id}",
+        "created_at": now,
+        "started_at": now,
+        "retention_hours": 24.0,
+    }
     defaults.update(overrides)
     return JobState(**defaults)
 
@@ -89,11 +89,13 @@ def mock_executor() -> MagicMock:
 def client(mock_executor: MagicMock, mock_store: JobStore):
     """Full-lifespan TestClient with DockerService patched out and app state
     replaced with fresh mocks so each test is fully isolated."""
-    with patch("solar_host.docker.service.DockerService"):
-        with TestClient(app, raise_server_exceptions=True) as c:
-            app.state.job_executor = mock_executor
-            app.state.job_store = mock_store
-            yield c
+    with (
+        patch("solar_host.docker.service.DockerService"),
+        TestClient(app, raise_server_exceptions=True) as c,
+    ):
+        app.state.job_executor = mock_executor
+        app.state.job_store = mock_store
+        yield c
 
 
 # ---------------------------------------------------------------------------

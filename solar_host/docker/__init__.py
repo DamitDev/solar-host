@@ -11,12 +11,12 @@ from solar_host.docker.errors import (
 from solar_host.docker.service import ContainerStatus, DockerService
 
 __all__ = [
-    "DockerService",
-    "ContainerStatus",
-    "DockerServiceError",
-    "DaemonUnavailableError",
-    "ImagePullError",
-    "ContainerStartError",
     "ContainerNonZeroExitError",
+    "ContainerStartError",
+    "ContainerStatus",
+    "DaemonUnavailableError",
+    "DockerService",
+    "DockerServiceError",
     "GpuUnavailableError",
+    "ImagePullError",
 ]

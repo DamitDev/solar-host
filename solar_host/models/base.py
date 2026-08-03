@@ -1,9 +1,10 @@
 """Base models shared across all backend types."""
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Any
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class BackendType(str, Enum):
@@ -56,17 +57,17 @@ class InstanceRuntimeState(BaseModel):
     instance_id: str
     busy: bool
     phase: InstancePhase = InstancePhase.IDLE
-    prefill_progress: Optional[float] = None
+    prefill_progress: float | None = None
     active_slots: int = 0
     # Optional contextual metrics
-    slot_id: Optional[int] = None
-    task_id: Optional[int] = None
-    prefill_prompt_tokens: Optional[int] = None
-    generated_tokens: Optional[int] = None
-    decode_tps: Optional[float] = None
-    decode_ms_per_token: Optional[float] = None
-    checkpoint_index: Optional[int] = None
-    checkpoint_total: Optional[int] = None
+    slot_id: int | None = None
+    task_id: int | None = None
+    prefill_prompt_tokens: int | None = None
+    generated_tokens: int | None = None
+    decode_tps: float | None = None
+    decode_ms_per_token: float | None = None
+    checkpoint_index: int | None = None
+    checkpoint_total: int | None = None
     timestamp: str
 
 
@@ -95,20 +96,20 @@ class GenerationMetrics(BaseModel):
     """Per-generation token usage and timing metrics."""
 
     instance_id: str
-    slot_id: Optional[int] = None
-    task_id: Optional[int] = None
+    slot_id: int | None = None
+    task_id: int | None = None
 
     # Token usage
-    prompt_tokens: Optional[int] = None
-    generated_tokens: Optional[int] = None
+    prompt_tokens: int | None = None
+    generated_tokens: int | None = None
 
     # Decode performance
-    decode_tps: Optional[float] = None
-    decode_ms_per_token: Optional[float] = None
+    decode_tps: float | None = None
+    decode_ms_per_token: float | None = None
 
     # Timestamps
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 class Instance(BaseModel):
@@ -121,11 +122,11 @@ class Instance(BaseModel):
     id: str
     config: Any  # InstanceConfig - discriminated union
     status: InstanceStatus = InstanceStatus.STOPPED
-    port: Optional[int] = None
-    pid: Optional[int] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    started_at: Optional[datetime] = None
-    error_message: Optional[str] = None
+    port: int | None = None
+    pid: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
+    error_message: str | None = None
     retry_count: int = 0
 
     # Priority and ownership (S-036)
@@ -133,21 +134,21 @@ class Instance(BaseModel):
         default=InstancePriority.PRODUCTION,
         description="Instance priority for placement and eviction decisions",
     )
-    managed_by: Optional[str] = Field(
+    managed_by: str | None = Field(
         default=None,
         description="Owner subsystem (e.g. 'intent' for reconciler-managed instances)",
     )
-    intent_id: Optional[str] = Field(
+    intent_id: str | None = Field(
         default=None,
         description="Owning intent ID (set iff managed_by == 'intent')",
     )
 
     # Supported API endpoints for this instance (populated by backend runner)
-    supported_endpoints: List[str] = Field(default_factory=list)
+    supported_endpoints: list[str] = Field(default_factory=list)
 
     # Ephemeral runtime fields (not persisted to disk)
     busy: bool = Field(default=False, exclude=True)
-    prefill_progress: Optional[float] = Field(default=None, exclude=True)
+    prefill_progress: float | None = Field(default=None, exclude=True)
     active_slots: int = Field(default=0, exclude=True)
 
 
@@ -158,9 +159,9 @@ class InstanceCreate(BaseModel):
     """
 
     config: Any  # InstanceConfig
-    priority: Optional[str] = None
-    managed_by: Optional[str] = None
-    intent_id: Optional[str] = None
+    priority: str | None = None
+    managed_by: str | None = None
+    intent_id: str | None = None
 
 
 class InstanceUpdate(BaseModel):
@@ -171,9 +172,9 @@ class InstanceUpdate(BaseModel):
     (``managed_by``/``intent_id`` may be set to null to clear ownership).
     """
 
-    config: Optional[Any] = None  # InstanceConfig
-    managed_by: Optional[str] = None
-    intent_id: Optional[str] = None
+    config: Any | None = None  # InstanceConfig
+    managed_by: str | None = None
+    intent_id: str | None = None
 
 
 class InstanceResponse(BaseModel):

@@ -144,7 +144,7 @@ class JobStepExecutor:
                     await asyncio.to_thread(
                         self._docker.remove_container, container_id, True
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     logger.warning(
                         "Failed to remove container %s for step %r in job %r",
                         container_id,
@@ -300,7 +300,7 @@ class JobStepExecutor:
                     step_log_buffer.append(
                         job_id, step_name, step_index, stream_tag, chunk
                     )
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.debug(
                 "Log streaming finished for container %s → %s", container_id, log_path
             )
@@ -310,5 +310,5 @@ class JobStepExecutor:
         """Wait for the log-streaming future with a short timeout (best effort)."""
         try:
             await asyncio.wait_for(log_future, timeout=5.0)
-        except Exception:
+        except Exception:  # noqa: S110, BLE001
             pass

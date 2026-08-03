@@ -5,18 +5,19 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from solar_host.models.base import Instance, InstanceStatus
-from solar_host.models.llamacpp import LlamaCppConfig
 from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
     HuggingFaceEmbeddingConfig,
     HuggingFaceVisionConfig,
 )
+from solar_host.models.llamacpp import LlamaCppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-def migrate_config_data(config_data: Dict[str, Any]) -> Dict[str, Any]:
+def migrate_config_data(config_data: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy config data to new format.
 
     Adds backend_type to configs that don't have it (defaults to llamacpp).
@@ -122,7 +123,7 @@ def resolve_model_source(model_source: str) -> str:
     - repo://...
     - huggingface://...
     """
-    if model_source.startswith("repo://") or model_source.startswith("huggingface://"):
+    if model_source.startswith(("repo://", "huggingface://")):
         raise ValueError(
             "Model must be resolved via POST /models/pull before instance creation. "
             "Use local:// or provide model/model_id path."
@@ -153,7 +154,7 @@ def resolve_model_source(model_source: str) -> str:
     return str(resolved_path)
 
 
-def parse_instance_config(config_data: Dict[str, Any]) -> Any:
+def parse_instance_config(config_data: dict[str, Any]) -> Any:
     """Parse config data into the appropriate config type based on backend_type."""
     # Migrate first
     config_data = migrate_config_data(config_data)
@@ -199,11 +200,11 @@ class ConfigManager:
     loop thread and background log-reader threads.
     """
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: str | None = None):
         self._lock = threading.Lock()
         self.config_file = Path(config_file or settings.config_file)
-        self.instances: Dict[str, Instance] = {}
-        self.roles: List[str] = ["inference"]
+        self.instances: dict[str, Instance] = {}
+        self.roles: list[str] = ["inference"]
         self.load()
 
     def load(self):
@@ -231,10 +232,10 @@ class ConfigManager:
                             instance_data_copy["config"] = config
                             instance = Instance(**instance_data_copy)
                             self.instances[instance.id] = instance
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001
                             logger.warning("Skipping instance during load: %s", e)
                             continue
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error("Error loading config: %s", e)
                 self.instances = {}
         else:
@@ -255,7 +256,7 @@ class ConfigManager:
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2, default=str)
             os.replace(tmp, self.config_file)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("Error saving config: %s", e)
 
     def save(self):
@@ -296,17 +297,17 @@ class ConfigManager:
                 del self.instances[instance_id]
                 self._save_unlocked()
 
-    def get_instance(self, instance_id: str) -> Optional[Instance]:
+    def get_instance(self, instance_id: str) -> Instance | None:
         """Get an instance by ID."""
         with self._lock:
             return self.instances.get(instance_id)
 
-    def get_all_instances(self) -> List[Instance]:
+    def get_all_instances(self) -> list[Instance]:
         """Get all instances."""
         with self._lock:
             return list(self.instances.values())
 
-    def get_running_instances(self) -> List[Instance]:
+    def get_running_instances(self) -> list[Instance]:
         """Get all running instances."""
         with self._lock:
             return [

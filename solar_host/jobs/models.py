@@ -59,7 +59,7 @@ class GpuOptions(BaseModel):
     device_ids: list[str] | None = None
 
     @model_validator(mode="after")
-    def _require_count_or_device_ids(self) -> "GpuOptions":
+    def _require_count_or_device_ids(self) -> GpuOptions:
         if self.count is None and self.device_ids is None:
             raise ValueError("gpu options require count or device_ids")
         return self

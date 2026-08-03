@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -81,7 +81,7 @@ def test_step_definition_with_gpu_options():
 
 
 def test_step_definition_missing_required_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         StepDefinition(name="train")  # type: ignore[call-arg]
 
 
@@ -218,8 +218,8 @@ def test_step_state_defaults():
 
 
 def test_step_state_with_all_fields():
-    now = datetime(2024, 1, 1, 12, 0, 0)
-    later = datetime(2024, 1, 1, 12, 5, 0)
+    now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    later = datetime(2024, 1, 1, 12, 5, 0, tzinfo=UTC)
     state = StepState(
         name="train",
         status=StepStatus.completed,

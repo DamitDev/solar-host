@@ -7,19 +7,19 @@ import platform
 import shutil
 import time
 from pathlib import Path
-from typing import Optional, Dict, Union
+
 import psutil
 
 # Cache for memory info to avoid excessive polling
-_memory_cache: Optional[Dict] = None
+_memory_cache: dict | None = None
 _cache_timestamp: float = 0
 CACHE_DURATION = 5.0  # seconds
 
 # GPU type is constant for the lifetime of the process
-_gpu_type_cache: Optional[str] = None
+_gpu_type_cache: str | None = None
 
 
-def get_memory_info() -> Optional[Dict[str, Union[float, str]]]:
+def get_memory_info() -> dict[str, float | str] | None:
     """
     Get memory information based on platform.
 
@@ -75,7 +75,7 @@ def detect_gpu_type() -> str:
             _gpu_type_cache = "nvidia_cuda"
             return _gpu_type_cache
         pynvml.nvmlShutdown()
-    except Exception:
+    except Exception:  # noqa: S110, BLE001
         pass
 
     if platform.system() == "Darwin":
@@ -86,7 +86,7 @@ def detect_gpu_type() -> str:
     return _gpu_type_cache
 
 
-def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
+def _get_nvidia_memory() -> dict[str, float | str] | None:
     """Get combined VRAM from all NVIDIA GPUs."""
     try:
         import pynvml  # type: ignore
@@ -119,11 +119,11 @@ def _get_nvidia_memory() -> Optional[Dict[str, Union[float, str]]]:
             "percent": round(percent, 2),
             "memory_type": "VRAM",
         }
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _get_system_memory() -> Optional[Dict[str, Union[float, str]]]:
+def _get_system_memory() -> dict[str, float | str] | None:
     """Get system RAM info via psutil (fallback for Linux without NVIDIA)."""
     try:
         mem = psutil.virtual_memory()
@@ -137,11 +137,11 @@ def _get_system_memory() -> Optional[Dict[str, Union[float, str]]]:
             "percent": round(mem.percent, 2),
             "memory_type": "RAM",
         }
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _get_mac_memory() -> Optional[Dict[str, Union[float, str]]]:
+def _get_mac_memory() -> dict[str, float | str] | None:
     """Get unified memory info on macOS."""
     try:
         mem = psutil.virtual_memory()
@@ -160,7 +160,7 @@ def _get_mac_memory() -> Optional[Dict[str, Union[float, str]]]:
             "percent": round(percent, 2),
             "memory_type": "RAM",
         }
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -195,7 +195,7 @@ def get_gpu_devices() -> list[dict[str, object]]:
         finally:
             pynvml.nvmlShutdown()
         return devices
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -210,7 +210,7 @@ def get_gpu_process_memory() -> dict[int, int]:
     # process's per-PID GPU memory can't be read (e.g. insufficient permissions
     # or MIG). The Python binding surfaces this as a huge sentinel or None;
     # accumulating it would wildly inflate usage, so we discard such values.
-    def _valid(used: object) -> Optional[int]:
+    def _valid(used: object) -> int | None:
         if used is None:
             return None
         try:
@@ -239,16 +239,16 @@ def get_gpu_process_memory() -> dict[int, int]:
                         used = _valid(proc.usedGpuMemory)
                         if used is not None:
                             pid_bytes[proc.pid] = pid_bytes.get(proc.pid, 0) + used
-                except Exception:
+                except Exception:  # noqa: S110, BLE001
                     pass
         finally:
             pynvml.nvmlShutdown()
         return pid_bytes
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
 
 
-def get_disk_info(path: str) -> Optional[Dict[str, float]]:
+def get_disk_info(path: str) -> dict[str, float] | None:
     """Return disk usage stats (in GB) for the filesystem containing *path*.
 
     Walks up to the nearest existing parent if *path* itself doesn't exist.
@@ -264,5 +264,5 @@ def get_disk_info(path: str) -> Optional[Dict[str, float]]:
             "used_gb": round(usage.used / (1024**3), 2),
             "available_gb": round(usage.free / (1024**3), 2),
         }
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None

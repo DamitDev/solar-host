@@ -1,10 +1,12 @@
 """Tests for model source URI resolution and instance configuration parsing."""
 
-import pytest
 from pathlib import Path
-from solar_host.config import resolve_model_source, parse_instance_config
-from solar_host.models.llamacpp import LlamaCppConfig
+
+import pytest
+
+from solar_host.config import parse_instance_config, resolve_model_source
 from solar_host.models.huggingface import HuggingFaceCausalConfig
+from solar_host.models.llamacpp import LlamaCppConfig
 
 
 @pytest.fixture

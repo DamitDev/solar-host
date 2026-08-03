@@ -9,13 +9,8 @@ per-event handlers (S-032).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 from solar_host.ws_client import broadcast_job_lifecycle, get_client
-
-if TYPE_CHECKING:
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers

@@ -2,11 +2,11 @@
 
 import re
 import sys
-from typing import List, Optional, Any, Dict
+from typing import Any
 
 from solar_host.backends.base import BackendRunner, RuntimeStateUpdate
-from solar_host.models.base import InstancePhase, GenerationMetrics, BackendType
 from solar_host.config import settings
+from solar_host.models.base import BackendType, GenerationMetrics, InstancePhase
 
 
 class HuggingFaceRunner(BackendRunner):
@@ -41,7 +41,7 @@ class HuggingFaceRunner(BackendRunner):
                 "Install with: pip install solar-host[huggingface]"
             )
 
-    def build_command(self, instance: Any) -> List[str]:
+    def build_command(self, instance: Any) -> list[str]:
         """Build command to start HuggingFace server process."""
         self.check_dependencies()
         config = instance.config
@@ -114,7 +114,7 @@ class HuggingFaceRunner(BackendRunner):
     def get_health_endpoint(self) -> str:
         return "/health"
 
-    def get_supported_endpoints(self) -> List[str]:
+    def get_supported_endpoints(self) -> list[str]:
         """Get supported endpoints.
 
         Note: This returns all possible endpoints. The actual endpoints
@@ -127,7 +127,7 @@ class HuggingFaceRunner(BackendRunner):
             "/health",
         ]
 
-    def get_supported_endpoints_for_type(self, backend_type: str) -> List[str]:
+    def get_supported_endpoints_for_type(self, backend_type: str) -> list[str]:
         """Get supported endpoints based on backend type."""
         if (
             backend_type == BackendType.HUGGINGFACE_CAUSAL
@@ -168,7 +168,7 @@ class HuggingFaceRunner(BackendRunner):
             ]
         return ["/v1/models", "/health"]
 
-    def initialize_context(self) -> Dict[str, Any]:
+    def initialize_context(self) -> dict[str, Any]:
         """Initialize parsing context for HuggingFace server log parsing."""
         return {
             "ready": False,
@@ -182,8 +182,8 @@ class HuggingFaceRunner(BackendRunner):
         }
 
     def parse_log_line(
-        self, instance_id: str, line: str, context: Dict[str, Any]
-    ) -> Optional[RuntimeStateUpdate]:
+        self, instance_id: str, line: str, context: dict[str, Any]
+    ) -> RuntimeStateUpdate | None:
         """Parse HuggingFace server log line and return state update if changed."""
         last_state = context.get("last_state", {})
 
@@ -267,11 +267,11 @@ class HuggingFaceRunner(BackendRunner):
         self,
         busy: bool,
         phase: InstancePhase,
-        last_state: Dict[str, Any],
-        context: Dict[str, Any],
-        generated_tokens: Optional[int] = None,
-        decode_tps: Optional[float] = None,
-    ) -> Optional[RuntimeStateUpdate]:
+        last_state: dict[str, Any],
+        context: dict[str, Any],
+        generated_tokens: int | None = None,
+        decode_tps: float | None = None,
+    ) -> RuntimeStateUpdate | None:
         """Create a RuntimeStateUpdate if state has changed."""
         changed = (
             last_state.get("busy") != busy
@@ -298,9 +298,7 @@ class HuggingFaceRunner(BackendRunner):
             decode_tps=decode_tps,
         )
 
-    def get_last_generation(
-        self, context: Dict[str, Any]
-    ) -> Optional[GenerationMetrics]:
+    def get_last_generation(self, context: dict[str, Any]) -> GenerationMetrics | None:
         """Get the last generation metrics from context."""
         recent = context.get("recent_generations", [])
         if not recent:

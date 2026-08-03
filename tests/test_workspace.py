@@ -116,9 +116,11 @@ def test_check_disk_space_sufficient(tmp_path: Path):
 
 def test_check_disk_space_insufficient(tmp_path: Path):
     # 1 GB free, 2 GB required — must raise
-    with patch("shutil.disk_usage", return_value=_fake_disk_usage(1 * 1024**3)):
-        with pytest.raises(InsufficientDiskError) as exc_info:
-            check_disk_space(tmp_path, min_free_gb=2.0)
+    with (
+        patch("shutil.disk_usage", return_value=_fake_disk_usage(1 * 1024**3)),
+        pytest.raises(InsufficientDiskError) as exc_info,
+    ):
+        check_disk_space(tmp_path, min_free_gb=2.0)
     err = exc_info.value
     assert err.required_gb == 2.0
     assert err.available_gb == pytest.approx(1.0, abs=0.01)
@@ -133,9 +135,11 @@ def test_check_disk_space_exactly_at_threshold(tmp_path: Path):
 def test_check_disk_space_just_below_threshold(tmp_path: Path):
     # 1 byte below 2 GB — must raise
     slightly_below = 2 * 1024**3 - 1
-    with patch("shutil.disk_usage", return_value=_fake_disk_usage(slightly_below)):
-        with pytest.raises(InsufficientDiskError):
-            check_disk_space(tmp_path, min_free_gb=2.0)
+    with (
+        patch("shutil.disk_usage", return_value=_fake_disk_usage(slightly_below)),
+        pytest.raises(InsufficientDiskError),
+    ):
+        check_disk_space(tmp_path, min_free_gb=2.0)
 
 
 # ---------------------------------------------------------------------------

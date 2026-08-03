@@ -1,8 +1,8 @@
 """Abstract base class for backend runners."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Any, Dict
 from dataclasses import dataclass
+from typing import Any
 
 from solar_host.models.base import InstancePhase
 
@@ -13,16 +13,16 @@ class RuntimeStateUpdate:
 
     busy: bool
     phase: InstancePhase
-    prefill_progress: Optional[float] = None
+    prefill_progress: float | None = None
     active_slots: int = 0
-    slot_id: Optional[int] = None
-    task_id: Optional[int] = None
-    prefill_prompt_tokens: Optional[int] = None
-    generated_tokens: Optional[int] = None
-    decode_tps: Optional[float] = None
-    decode_ms_per_token: Optional[float] = None
-    checkpoint_index: Optional[int] = None
-    checkpoint_total: Optional[int] = None
+    slot_id: int | None = None
+    task_id: int | None = None
+    prefill_prompt_tokens: int | None = None
+    generated_tokens: int | None = None
+    decode_tps: float | None = None
+    decode_ms_per_token: float | None = None
+    checkpoint_index: int | None = None
+    checkpoint_total: int | None = None
 
 
 class BackendRunner(ABC):
@@ -33,7 +33,7 @@ class BackendRunner(ABC):
     """
 
     @abstractmethod
-    def build_command(self, instance: Any) -> List[str]:
+    def build_command(self, instance: Any) -> list[str]:
         """Build the command to start the backend process.
 
         Args:
@@ -42,12 +42,11 @@ class BackendRunner(ABC):
         Returns:
             List of command arguments to spawn the process.
         """
-        pass
 
     @abstractmethod
     def parse_log_line(
-        self, instance_id: str, line: str, context: Dict[str, Any]
-    ) -> Optional[RuntimeStateUpdate]:
+        self, instance_id: str, line: str, context: dict[str, Any]
+    ) -> RuntimeStateUpdate | None:
         """Parse a log line and optionally return a runtime state update.
 
         Args:
@@ -59,7 +58,6 @@ class BackendRunner(ABC):
         Returns:
             RuntimeStateUpdate if the log line indicates a state change, None otherwise.
         """
-        pass
 
     @abstractmethod
     def get_health_endpoint(self) -> str:
@@ -68,16 +66,14 @@ class BackendRunner(ABC):
         Returns:
             The health endpoint path (e.g., "/health").
         """
-        pass
 
     @abstractmethod
-    def get_supported_endpoints(self) -> List[str]:
+    def get_supported_endpoints(self) -> list[str]:
         """Get the list of API endpoints this backend supports.
 
         Returns:
             List of endpoint paths (e.g., ["/v1/chat/completions", "/v1/completions"]).
         """
-        pass
 
     @abstractmethod
     def get_backend_type(self) -> str:
@@ -86,9 +82,8 @@ class BackendRunner(ABC):
         Returns:
             The backend type string (e.g., "llamacpp", "huggingface_causal").
         """
-        pass
 
-    def initialize_context(self) -> Dict[str, Any]:
+    def initialize_context(self) -> dict[str, Any]:
         """Initialize the parsing context for a new instance.
 
         Override this method to provide backend-specific context initialization.
@@ -98,7 +93,7 @@ class BackendRunner(ABC):
         """
         return {}
 
-    def on_process_started(self, instance_id: str, context: Dict[str, Any]) -> None:
+    def on_process_started(self, instance_id: str, context: dict[str, Any]) -> None:
         """Called when the backend process has started.
 
         Override this method to perform post-start initialization.
@@ -107,9 +102,8 @@ class BackendRunner(ABC):
             instance_id: The instance ID.
             context: The instance's parsing context.
         """
-        pass
 
-    def on_process_stopped(self, instance_id: str, context: Dict[str, Any]) -> None:
+    def on_process_stopped(self, instance_id: str, context: dict[str, Any]) -> None:
         """Called when the backend process has stopped.
 
         Override this method to perform cleanup.
@@ -118,9 +112,8 @@ class BackendRunner(ABC):
             instance_id: The instance ID.
             context: The instance's parsing context.
         """
-        pass
 
-    def get_supported_endpoints_for_type(self, backend_type: str) -> List[str]:
+    def get_supported_endpoints_for_type(self, backend_type: str) -> list[str]:
         """Get supported endpoints based on specific backend type.
 
         Override this method if the backend supports multiple model types
@@ -134,7 +127,7 @@ class BackendRunner(ABC):
         """
         return self.get_supported_endpoints()
 
-    def get_last_generation(self, context: Dict[str, Any]) -> Optional[Any]:
+    def get_last_generation(self, context: dict[str, Any]) -> Any | None:
         """Get the last generation metrics from context.
 
         Override this method to provide generation metrics tracking.

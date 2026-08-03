@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Iterator, Union, overload
+from typing import Literal, overload
 
 import docker
 import docker.errors as _docker_errors
 
-from solar_host.config import Settings, settings as _default_settings
+from solar_host.config import Settings
+from solar_host.config import settings as _default_settings
 from solar_host.docker.errors import (
     ContainerNonZeroExitError,
     ContainerStartError,
@@ -84,7 +86,7 @@ class DockerService:
         try:
             info = self._client.info()
             return "nvidia" in (info.get("Runtimes") or {})
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     def create_container(
@@ -274,7 +276,7 @@ class DockerService:
         follow: bool = True,
         tail: int = 50,
         demux: bool = False,
-    ) -> Union[Iterator[str], Iterator[tuple[str, str]]]:
+    ) -> Iterator[str] | Iterator[tuple[str, str]]:
         """Yield decoded log chunks from the container.
 
         Args:
@@ -289,7 +291,7 @@ class DockerService:
         """
         try:
             container = self._client.containers.get(container_id)
-            tail_arg: Union[int, str] = tail if tail > 0 else "all"
+            tail_arg: int | str = tail if tail > 0 else "all"
 
             if demux:
                 log_stream = container.logs(
@@ -340,7 +342,7 @@ class DockerService:
             try:
                 raw = container.logs(stdout=False, stderr=True, tail=20)
                 stderr_lines = raw.decode("utf-8", errors="replace").splitlines()
-            except Exception:
+            except Exception:  # noqa: S110, BLE001
                 pass
             raise ContainerNonZeroExitError(container_id, exit_code, stderr_lines)
 

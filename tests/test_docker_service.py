@@ -45,12 +45,14 @@ def _make_service(mock_client: MagicMock) -> DockerService:
 
 
 def test_daemon_unavailable_raises():
-    with patch(
-        "solar_host.docker.service.docker.from_env",
-        side_effect=_docker_errors.DockerException("daemon down"),
+    with (
+        patch(
+            "solar_host.docker.service.docker.from_env",
+            side_effect=_docker_errors.DockerException("daemon down"),
+        ),
+        pytest.raises(DaemonUnavailableError),
     ):
-        with pytest.raises(DaemonUnavailableError):
-            DockerService(settings=_TEST_SETTINGS)
+        DockerService(settings=_TEST_SETTINGS)
 
 
 # ---------------------------------------------------------------------------

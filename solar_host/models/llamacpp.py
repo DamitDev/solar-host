@@ -1,6 +1,6 @@
 """LlamaCpp backend configuration models."""
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -25,12 +25,10 @@ class LlamaCppConfig(BaseModel):
             data.pop("api_key", None)
         return data
 
-    model_source: Optional[str] = Field(
+    model_source: str | None = Field(
         default=None, description="Model source URI (e.g. local://path/to/model.gguf)"
     )
-    model: Optional[str] = Field(
-        default=None, description="Path to the GGUF model file"
-    )
+    model: str | None = Field(default=None, description="Path to the GGUF model file")
 
     @model_validator(mode="after")
     def check_model_or_source(self) -> "LlamaCppConfig":
@@ -38,7 +36,7 @@ class LlamaCppConfig(BaseModel):
             raise ValueError("Either 'model' or 'model_source' must be provided")
         return self
 
-    mmproj: Optional[str] = Field(
+    mmproj: str | None = Field(
         default=None,
         description="Path to multimodal projector GGUF file for vision models",
     )
@@ -54,60 +52,62 @@ class LlamaCppConfig(BaseModel):
     top_k: int = Field(default=0, description="Top-k sampling")
     min_p: float = Field(default=0.0, description="Min-p sampling")
     ctx_size: int = Field(default=131072, description="Context size")
-    chat_template_file: Optional[str] = Field(
+    chat_template_file: str | None = Field(
         default=None, description="Path to Jinja chat template"
     )
-    chat_template_kwargs: Optional[str] = Field(
+    chat_template_kwargs: str | None = Field(
         default=None,
         description="JSON string of chat template kwargs (e.g. '{\"enable_thinking\":true}')",
     )
-    reasoning: Optional[Literal["on", "off", "auto"]] = Field(
+    reasoning: Literal["on", "off", "auto"] | None = Field(
         default=None,
         description="Reasoning/thinking mode: 'on', 'off', or 'auto' (passed as --reasoning to llama-server)",
     )
-    reasoning_budget: Optional[int] = Field(
+    reasoning_budget: int | None = Field(
         default=None,
         description="Reasoning budget token limit (passed as --reasoning-budget to llama-server)",
     )
-    spec_type: Optional[Literal["draft-mtp"]] = Field(
+    spec_type: Literal["draft-mtp"] | None = Field(
         default=None,
         description="Speculative decoding type (passed as --spec-type to llama-server)",
     )
-    spec_draft_n_max: Optional[int] = Field(
+    spec_draft_n_max: int | None = Field(
         default=None,
         ge=1,
         description="Maximum speculative draft tokens (passed as --spec-draft-n-max to llama-server)",
     )
-    cache_type_k: Optional[
+    cache_type_k: (
         Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
-    ] = Field(default=None, description="KV cache quantization type for keys (-ctk)")
-    cache_type_v: Optional[
+        | None
+    ) = Field(default=None, description="KV cache quantization type for keys (-ctk)")
+    cache_type_v: (
         Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
-    ] = Field(default=None, description="KV cache quantization type for values (-ctv)")
-    rope_scaling: Optional[Literal["none", "linear", "yarn"]] = Field(
+        | None
+    ) = Field(default=None, description="KV cache quantization type for values (-ctv)")
+    rope_scaling: Literal["none", "linear", "yarn"] | None = Field(
         default=None, description="RoPE scaling method (--rope-scaling)"
     )
-    rope_scale: Optional[float] = Field(
+    rope_scale: float | None = Field(
         default=None, description="RoPE context scaling factor (--rope-scale)"
     )
-    yarn_orig_ctx: Optional[int] = Field(
+    yarn_orig_ctx: int | None = Field(
         default=None, description="YaRN original context size (--yarn-orig-ctx)"
     )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )
     special: bool = Field(
         default=False, description="Enable llama-server --special flag"
     )
-    ot: Optional[str] = Field(
+    ot: str | None = Field(
         default=None,
         description="Override tensor string (passed as -ot flag to llama-server)",
     )
-    model_type: Optional[Literal["llm", "embedding", "reranker"]] = Field(
+    model_type: Literal["llm", "embedding", "reranker"] | None = Field(
         default="llm", description="Model type: llm (default), embedding, or reranker"
     )
-    pooling: Optional[Literal["none", "mean", "cls", "last", "rank"]] = Field(
+    pooling: Literal["none", "mean", "cls", "last", "rank"] | None = Field(
         default=None,
         description="Pooling strategy for embedding models (only valid when model_type is embedding)",
     )

@@ -179,7 +179,7 @@ async def test_container_start_error_returns_true_and_marks_step_failed() -> Non
 
 @pytest.mark.anyio
 async def test_remove_container_called_even_on_nonzero_exit() -> None:
-    step_exec, ds, store = _make_step_executor()
+    step_exec, ds, _store = _make_step_executor()
     ds.wait_container.side_effect = ContainerNonZeroExitError("container-xyz", 1, [])
 
     with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
@@ -196,7 +196,7 @@ async def test_remove_container_called_even_on_nonzero_exit() -> None:
 @pytest.mark.anyio
 async def test_active_container_cleared_after_step() -> None:
     active: dict[str, str] = {}
-    step_exec, ds, store = _make_step_executor(active_containers=active)
+    step_exec, _ds, _store = _make_step_executor(active_containers=active)
 
     with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
         await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
@@ -323,9 +323,11 @@ def test_validate_gpu_options_valid_count() -> None:
 
 def test_validate_gpu_options_count_exceeds_inventory_raises() -> None:
     step_exec, _, _ = _make_step_executor()
-    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
-        with pytest.raises(GpuValidationError):
-            step_exec._validate_gpu_options(GpuOptions(count=5))
+    with (
+        patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY),
+        pytest.raises(GpuValidationError),
+    ):
+        step_exec._validate_gpu_options(GpuOptions(count=5))
 
 
 def test_validate_gpu_options_count_minus_one_skips_count_check() -> None:
@@ -352,9 +354,11 @@ def test_validate_gpu_options_valid_device_uuid() -> None:
 
 def test_validate_gpu_options_invalid_device_id_raises() -> None:
     step_exec, _, _ = _make_step_executor()
-    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY):
-        with pytest.raises(GpuValidationError):
-            step_exec._validate_gpu_options(GpuOptions(device_ids=["99"]))
+    with (
+        patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=_TWO_GPU_INVENTORY),
+        pytest.raises(GpuValidationError),
+    ):
+        step_exec._validate_gpu_options(GpuOptions(device_ids=["99"]))
 
 
 def test_validate_gpu_options_empty_inventory_skips() -> None:
@@ -377,9 +381,11 @@ async def test_gpu_unavailable_error_marks_step_failed() -> None:
     step_exec, ds, _ = _make_step_executor(store=store)
     ds.create_container.side_effect = GpuUnavailableError("toolkit missing")
 
-    with patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]):
-        with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
-            result = await step_exec.run(_JOB_ID, 0, step, _WORKSPACE)
+    with (
+        patch(f"{_STEP_MODULE}.get_gpu_devices", return_value=[]),
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+    ):
+        result = await step_exec.run(_JOB_ID, 0, step, _WORKSPACE)
 
     assert result is True
     assert store.get(_JOB_ID).steps[0].status == StepStatus.failed  # type: ignore[union-attr]
@@ -477,12 +483,14 @@ def test_stream_logs_failure_does_not_raise(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_mark_completed_called_on_success() -> None:
-    step_exec, ds, _ = _make_step_executor()
+    step_exec, _ds, _ = _make_step_executor()
     mock_buf = MagicMock()
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
-        with patch(_BUF_MODULE, mock_buf):
-            await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BUF_MODULE, mock_buf),
+    ):
+        await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     mock_buf.mark_completed.assert_called_once_with(_JOB_ID, "train", 0, exit_code=0)
 
@@ -493,9 +501,11 @@ async def test_mark_completed_called_on_nonzero_exit() -> None:
     ds.wait_container.side_effect = ContainerNonZeroExitError("ctr", 5, [])
     mock_buf = MagicMock()
 
-    with patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"):
-        with patch(_BUF_MODULE, mock_buf):
-            await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
+    with (
+        patch(f"{_STEP_MODULE}.JobStepExecutor._stream_logs"),
+        patch(_BUF_MODULE, mock_buf),
+    ):
+        await step_exec.run(_JOB_ID, 0, _make_step(), _WORKSPACE)
 
     mock_buf.mark_completed.assert_called_once_with(_JOB_ID, "train", 0, exit_code=5)
 

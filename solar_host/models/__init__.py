@@ -1,27 +1,25 @@
 """Models package for solar-host with multi-backend support."""
 
-from typing import Union, Annotated
+from typing import Annotated
+
 from pydantic import Field
 
 # Import base models first (no dependencies on config types)
 from solar_host.models.base import (
     BackendType,
-    InstanceStatus,
-    InstancePhase,
-    InstancePriority,
+    GenerationMetrics,
     Instance,
     InstanceCreate,
-    InstanceUpdate,
-    LogMessage,
+    InstancePhase,
+    InstancePriority,
+    InstanceResponse,
     InstanceRuntimeState,
     InstanceStateEvent,
-    InstanceResponse,
+    InstanceStatus,
+    InstanceUpdate,
+    LogMessage,
     MemoryInfo,
-    GenerationMetrics,
 )
-
-# Import config models
-from solar_host.models.llamacpp import LlamaCppConfig
 from solar_host.models.huggingface import (
     HuggingFaceCausalConfig,
     HuggingFaceClassificationConfig,
@@ -29,41 +27,42 @@ from solar_host.models.huggingface import (
     HuggingFaceVisionConfig,
 )
 
+# Import config models
+from solar_host.models.llamacpp import LlamaCppConfig
+
 # Create the discriminated union type for InstanceConfig
 InstanceConfig = Annotated[
-    Union[
-        LlamaCppConfig,
-        HuggingFaceCausalConfig,
-        HuggingFaceClassificationConfig,
-        HuggingFaceEmbeddingConfig,
-        HuggingFaceVisionConfig,
-    ],
+    LlamaCppConfig
+    | HuggingFaceCausalConfig
+    | HuggingFaceClassificationConfig
+    | HuggingFaceEmbeddingConfig
+    | HuggingFaceVisionConfig,
     Field(discriminator="backend_type"),
 ]
 
 __all__ = [
     # Enums
     "BackendType",
-    "InstanceStatus",
-    "InstancePhase",
-    "InstancePriority",
-    # Config types
-    "InstanceConfig",
-    "LlamaCppConfig",
+    "GenerationMetrics",
     "HuggingFaceCausalConfig",
     "HuggingFaceClassificationConfig",
     "HuggingFaceEmbeddingConfig",
     "HuggingFaceVisionConfig",
     # Instance models
     "Instance",
+    # Config types
+    "InstanceConfig",
     "InstanceCreate",
-    "InstanceUpdate",
+    "InstancePhase",
+    "InstancePriority",
     "InstanceResponse",
-    # Runtime models
-    "LogMessage",
     "InstanceRuntimeState",
     "InstanceStateEvent",
-    "GenerationMetrics",
+    "InstanceStatus",
+    "InstanceUpdate",
+    "LlamaCppConfig",
+    # Runtime models
+    "LogMessage",
     # Other
     "MemoryInfo",
 ]

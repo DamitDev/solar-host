@@ -46,3 +46,6 @@ logs/
 .env
 .env.local
 
+
+# Test suite runtime artifact
+models/

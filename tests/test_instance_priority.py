@@ -4,9 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from solar_host.models.base import (
-    InstancePriority,
     Instance,
     InstanceCreate,
+    InstancePriority,
     InstanceUpdate,
 )
 

@@ -77,7 +77,7 @@ class JobStore:
         for item in data:
             try:
                 state = JobState(**item)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Skipping malformed job entry in %s: %s", path, item)
                 continue
 

@@ -10,8 +10,8 @@ handling:
 import asyncio
 import logging
 import ssl
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _to_http_url(ws_url: str) -> str:
         url = "https://" + url[6:]
     elif url.startswith("ws://"):
         url = "http://" + url[5:]
-    elif not (url.startswith("http://") or url.startswith("https://")):
+    elif not (url.startswith(("http://", "https://"))):
         url = "http://" + url
 
     parsed = urlparse(url)
@@ -71,14 +71,14 @@ class SolarControlClient:
         self.insecure = insecure
 
         # Host ID assigned by solar-control after registration_ack
-        self.host_id: Optional[str] = None
+        self.host_id: str | None = None
 
-        self._sio: Optional["socketio.AsyncClient"] = None
+        self._sio: socketio.AsyncClient | None = None
         self._connected = False
         self._pending = False
         self._running = False
-        self._connection_task: Optional[Any] = None
-        self._registration_task: Optional[asyncio.Task] = None
+        self._connection_task: Any | None = None
+        self._registration_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -118,7 +118,7 @@ class SolarControlClient:
         if self._sio:
             try:
                 await self._sio.disconnect()
-            except Exception:
+            except Exception:  # noqa: S110, BLE001
                 pass
             self._sio = None
 
@@ -193,7 +193,7 @@ class SolarControlClient:
                 await sio.wait()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if self._running:
                     logger.warning("SolarControlClient: Connection error: %s", e)
                     await asyncio.sleep(outer_backoff)
@@ -329,14 +329,14 @@ class SolarControlClient:
             return
         try:
             await self._sio.emit(event, data, namespace=self.NAMESPACE)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("SolarControlClient: Emit error: %s", e)
 
-    async def send_log_batch(self, entries: List[dict]):
+    async def send_log_batch(self, entries: list[dict]):
         """Send a batch of log messages to solar-control in a single emit."""
         await self._emit("log_batch", {"entries": entries})
 
-    async def send_step_log_batch(self, entries: List[dict]) -> None:
+    async def send_step_log_batch(self, entries: list[dict]) -> None:
         """Send a batch of step log lines to solar-control in a single emit."""
         await self._emit("step_log", {"entries": entries})
 
@@ -344,14 +344,14 @@ class SolarControlClient:
         """Emit a job lifecycle event directly by name (fire-and-forget)."""
         await self._emit(event_name, data)
 
-    async def send_instance_state_batch(self, entries: List[dict]):
+    async def send_instance_state_batch(self, entries: list[dict]):
         """Send a batch of instance state updates to solar-control."""
         await self._emit("instance_state_batch", {"entries": entries})
 
     async def send_health(
         self,
-        memory: Optional[Dict[str, Any]] = None,
-        resource_manager: Optional[Any] = None,
+        memory: dict[str, Any] | None = None,
+        resource_manager: Any | None = None,
     ):
         """Send host health/memory update to solar-control.
 
@@ -360,12 +360,12 @@ class SolarControlClient:
         added to the health payload (per-dimension totals + active count only —
         no per-reservation list, per decision O4).
         """
+        from solar_host.config import config_manager, settings
         from solar_host.memory_monitor import (
-            get_memory_info,
             detect_gpu_type,
             get_disk_info,
+            get_memory_info,
         )
-        from solar_host.config import config_manager, settings
 
         if memory is None:
             memory = await asyncio.to_thread(get_memory_info)
@@ -377,7 +377,7 @@ class SolarControlClient:
 
         from solar_host import __version__
 
-        health_data: Dict[str, Any] = {
+        health_data: dict[str, Any] = {
             "memory": memory,
             "gpu_type": gpu_type,
             "roles": config_manager.roles,
@@ -395,7 +395,7 @@ class SolarControlClient:
         if resource_manager is not None:
             try:
                 snap = await asyncio.to_thread(resource_manager.snapshot)
-                reservations_block: Dict[str, Any] = {
+                reservations_block: dict[str, Any] = {
                     "active_count": len(snap.reservations),
                 }
                 for dim_name, dim in (
@@ -412,13 +412,13 @@ class SolarControlClient:
                             "available_gb": dim.available_gb,
                         }
                 health_data["reservations"] = reservations_block
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("send_health: failed to include reservations: %s", exc)
 
         await self._emit(
             "host_health",
             {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "data": health_data,
             },
         )
@@ -454,7 +454,7 @@ class SolarControlClient:
         await self._emit(
             "instances_update",
             {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "data": {"instances": instances},
             },
         )
@@ -487,15 +487,15 @@ if HAS_SOCKETIO and socketio is not None:
 
 
 # Global client instances (initialized in main.py)
-solar_control_clients: List[SolarControlClient] = []
+solar_control_clients: list[SolarControlClient] = []
 
 
-def get_clients() -> List[SolarControlClient]:
+def get_clients() -> list[SolarControlClient]:
     """Get all solar-control clients."""
     return solar_control_clients
 
 
-def get_client() -> Optional[SolarControlClient]:
+def get_client() -> SolarControlClient | None:
     """Get the first connected solar-control client (legacy compatibility)."""
     for client in solar_control_clients:
         if client.is_connected:
@@ -503,7 +503,7 @@ def get_client() -> Optional[SolarControlClient]:
     return solar_control_clients[0] if solar_control_clients else None
 
 
-def init_clients(settings) -> List[SolarControlClient]:
+def init_clients(settings) -> list[SolarControlClient]:
     """Initialize solar-control client from settings.
 
     Uses single URL (first if multiple configured) - connect to load balancer.
@@ -535,14 +535,14 @@ def init_clients(settings) -> List[SolarControlClient]:
     return solar_control_clients
 
 
-async def broadcast_log_batch(entries: List[dict]):
+async def broadcast_log_batch(entries: list[dict]):
     """Send a batch of log messages to solar-control."""
     client = get_client()
     if client:
         await client.send_log_batch(entries)
 
 
-async def broadcast_step_log_batch(entries: List[dict]) -> None:
+async def broadcast_step_log_batch(entries: list[dict]) -> None:
     """Send a batch of step log lines to solar-control."""
     client = get_client()
     if client:
@@ -556,7 +556,7 @@ async def broadcast_job_lifecycle(event_name: str, data: dict) -> None:
         await client.send_job_lifecycle(event_name, data)
 
 
-async def broadcast_instance_state_batch(entries: List[dict]):
+async def broadcast_instance_state_batch(entries: list[dict]):
     """Send a batch of instance state updates to solar-control."""
     client = get_client()
     if client:
@@ -564,8 +564,8 @@ async def broadcast_instance_state_batch(entries: List[dict]):
 
 
 async def broadcast_health(
-    memory: Optional[Dict[str, Any]] = None,
-    resource_manager: Optional[Any] = None,
+    memory: dict[str, Any] | None = None,
+    resource_manager: Any | None = None,
 ):
     """Send health update to solar-control."""
     client = get_client()

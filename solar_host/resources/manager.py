@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import psutil
 
@@ -73,11 +73,11 @@ class ResourceManager:
 
     def __init__(
         self,
-        job_store: "JobStore",
-        docker_service: Optional["DockerService"],
-        job_executor: Optional["JobExecutor"],
+        job_store: JobStore,
+        docker_service: DockerService | None,
+        job_executor: JobExecutor | None,
         jobs_dir: str = "./jobs",
-        default_ttl_seconds: Optional[float] = 86400.0,
+        default_ttl_seconds: float | None = 86400.0,
     ) -> None:
         self._job_store = job_store
         self._docker_service = docker_service
@@ -225,8 +225,8 @@ class ResourceManager:
 
         mem = get_memory_info()
         memory_type = "RAM"
-        vram_dim: Optional[ResourceDimensionSnapshot] = None
-        ram_dim: Optional[ResourceDimensionSnapshot] = None
+        vram_dim: ResourceDimensionSnapshot | None = None
+        ram_dim: ResourceDimensionSnapshot | None = None
 
         if mem is not None:
             memory_type = str(mem["memory_type"])
@@ -257,7 +257,7 @@ class ResourceManager:
                         reported_used_gb=ram_reported,
                         available_gb=max(0.0, ram_total - ram_reported),
                     )
-                except Exception:
+                except Exception:  # noqa: S110, BLE001
                     pass
             else:
                 headroom = self._headroom_unlocked("ram")
@@ -270,7 +270,7 @@ class ResourceManager:
                     available_gb=max(0.0, total - reported),
                 )
 
-        disk_dim: Optional[ResourceDimensionSnapshot] = None
+        disk_dim: ResourceDimensionSnapshot | None = None
         disk_info = get_disk_info(settings.jobs_dir)
         if disk_info is not None:
             sys_disk = float(disk_info["used_gb"])

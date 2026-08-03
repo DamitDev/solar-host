@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,16 +19,16 @@ class ReservationRequest(BaseModel):
     """Input model for POST /resources/reservations."""
 
     job_id: str
-    requester: Optional[str] = None
+    requester: str | None = None
     workload_type: WorkloadType = WorkloadType.training
     vram_gb: float = Field(ge=0)
     ram_gb: float = Field(ge=0)
-    disk_gb: Optional[float] = Field(default=None, ge=0)
-    ttl_seconds: Optional[float] = Field(default=None, gt=0)
-    expires_at: Optional[datetime] = None
+    disk_gb: float | None = Field(default=None, ge=0)
+    ttl_seconds: float | None = Field(default=None, gt=0)
+    expires_at: datetime | None = None
 
     @model_validator(mode="after")
-    def _validate_expiry(self) -> "ReservationRequest":
+    def _validate_expiry(self) -> ReservationRequest:
         if self.ttl_seconds is not None and self.expires_at is not None:
             raise ValueError(
                 "Specify at most one of ttl_seconds or expires_at, not both"
@@ -42,27 +41,27 @@ class Reservation(BaseModel):
 
     id: str
     job_id: str
-    requester: Optional[str] = None
+    requester: str | None = None
     workload_type: WorkloadType
     vram_gb: float
     ram_gb: float
-    disk_gb: Optional[float] = None
+    disk_gb: float | None = None
     created_at: datetime
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
 
     # Cached actual usage (updated by the poll loop for running reservations).
-    actual_vram_gb: Optional[float] = None
-    actual_ram_gb: Optional[float] = None
-    actual_disk_gb: Optional[float] = None
-    usage_polled_at: Optional[datetime] = None
+    actual_vram_gb: float | None = None
+    actual_ram_gb: float | None = None
+    actual_disk_gb: float | None = None
+    usage_polled_at: datetime | None = None
 
     @classmethod
     def from_request(
         cls,
         req: ReservationRequest,
         now: datetime,
-        default_ttl_seconds: Optional[float] = None,
-    ) -> "Reservation":
+        default_ttl_seconds: float | None = None,
+    ) -> Reservation:
         """Build a Reservation, resolving its expiry.
 
         Precedence for ``expires_at``:
@@ -72,7 +71,7 @@ class Reservation(BaseModel):
            callers that want a longer-lived reservation supply their own
            ttl_seconds/expires_at)
         """
-        expires_at: Optional[datetime] = None
+        expires_at: datetime | None = None
         if req.expires_at is not None:
             expires_at = req.expires_at
         elif req.ttl_seconds is not None:
@@ -111,18 +110,18 @@ class ReservationView(BaseModel):
     status: str  # "pending" | "running"
     vram_gb: float
     ram_gb: float
-    disk_gb: Optional[float] = None
-    actual_vram_gb: Optional[float] = None
-    actual_ram_gb: Optional[float] = None
-    actual_disk_gb: Optional[float] = None
-    expires_at: Optional[datetime] = None
+    disk_gb: float | None = None
+    actual_vram_gb: float | None = None
+    actual_ram_gb: float | None = None
+    actual_disk_gb: float | None = None
+    expires_at: datetime | None = None
 
 
 class ResourceSnapshot(BaseModel):
     """Full resource snapshot returned by GET /resources."""
 
     memory_type: str  # "VRAM" or "RAM" — primary dimension reported by get_memory_info
-    vram: Optional[ResourceDimensionSnapshot] = None
-    ram: Optional[ResourceDimensionSnapshot] = None
-    disk: Optional[ResourceDimensionSnapshot] = None
+    vram: ResourceDimensionSnapshot | None = None
+    ram: ResourceDimensionSnapshot | None = None
+    disk: ResourceDimensionSnapshot | None = None
     reservations: list[ReservationView] = []

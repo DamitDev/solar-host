@@ -16,7 +16,7 @@ the request with 409 if any active instance references the model. Per S-017.
 import asyncio
 import os
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -48,16 +48,16 @@ class ModelEntry(BaseModel):
     name: str
     path: str
     size_bytes: int
-    source_uri: Optional[str] = None
-    checksum: Optional[str] = None
-    downloaded_at: Optional[str] = None
-    category: Optional[str] = None
-    model_name: Optional[str] = None
-    version: Optional[str] = None
-    metadata: Optional[dict] = None
+    source_uri: str | None = None
+    checksum: str | None = None
+    downloaded_at: str | None = None
+    category: str | None = None
+    model_name: str | None = None
+    version: str | None = None
+    metadata: dict | None = None
 
 
-def _manifest_to_entries() -> List[ModelEntry]:
+def _manifest_to_entries() -> list[ModelEntry]:
     manifest = read_manifest()
     return [
         ModelEntry(
@@ -76,8 +76,8 @@ def _manifest_to_entries() -> List[ModelEntry]:
     ]
 
 
-@router.get("", response_model=List[ModelEntry], summary="List managed models")
-async def list_models() -> List[ModelEntry]:
+@router.get("", response_model=list[ModelEntry], summary="List managed models")
+async def list_models() -> list[ModelEntry]:
     """Return all models listed in the managed models manifest.
 
     Data comes only from ``manifest.json`` under ``MODELS_DIR`` (see
@@ -107,15 +107,15 @@ class PullRequest(BaseModel):
 
     source: Literal["harbor", "huggingface"]
     source_uri: str
-    harbor_ref: Optional[str] = None
-    model_id: Optional[str] = None
-    digest: Optional[str] = None
-    size_bytes: Optional[int] = None
-    category: Optional[str] = None
-    name: Optional[str] = None
-    version: Optional[str] = None
-    checksum: Optional[str] = None
-    metadata: Optional[dict] = None
+    harbor_ref: str | None = None
+    model_id: str | None = None
+    digest: str | None = None
+    size_bytes: int | None = None
+    category: str | None = None
+    name: str | None = None
+    version: str | None = None
+    checksum: str | None = None
+    metadata: dict | None = None
 
 
 class PullResponse(BaseModel):
@@ -145,7 +145,7 @@ class PullResponse(BaseModel):
         507: {"description": "Insufficient disk space"},
     },
 )
-async def pull_model(req: PullRequest) -> Union[PullResponse, JSONResponse]:
+async def pull_model(req: PullRequest) -> PullResponse | JSONResponse:
     """Pull a model from Harbor or HuggingFace Hub.
 
     Checks the manifest cache first. On a cache hit the stored path is returned
@@ -239,7 +239,7 @@ def _instance_uses_model(instance_config: object, model_dir: Path) -> bool:
     return False
 
 
-def _find_using_instance(model_dir: Path) -> Optional[str]:
+def _find_using_instance(model_dir: Path) -> str | None:
     """Return the ID of the first active instance using *model_dir*, or None."""
     for instance in config_manager.get_all_instances():
         if instance.status not in _ACTIVE_STATUSES:

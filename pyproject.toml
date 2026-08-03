@@ -59,3 +59,8 @@ packages = ["solar_host"]
 target-version = ["py312"]
 line-length = 88
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+]
+

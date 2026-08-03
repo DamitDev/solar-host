@@ -87,7 +87,7 @@ class StepStateResponse(BaseModel):
         job_id: str,
         *,
         max_recent: int = 100,
-    ) -> "StepStateResponse":
+    ) -> StepStateResponse:
         from pathlib import Path
 
         log_file = str(Path(settings.jobs_dir) / job_id / "logs" / f"{step.name}.log")
@@ -159,7 +159,7 @@ class JobStateResponse(BaseModel):
     }
 
     @classmethod
-    def from_job_state(cls, job: JobState) -> "JobStateResponse":
+    def from_job_state(cls, job: JobState) -> JobStateResponse:
         return cls(
             job_id=job.job_id,
             name=job.name,

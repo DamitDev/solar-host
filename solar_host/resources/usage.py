@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from solar_host.memory_monitor import get_gpu_process_memory
 
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 async def collect_container_ram_gb(
-    docker_service: "DockerService", container_id: str
-) -> Optional[float]:
+    docker_service: DockerService, container_id: str
+) -> float | None:
     """Return RAM used by *container_id* in GB, or None on failure.
 
     Subtracts the reclaimable page cache from the raw ``memory_stats.usage``
@@ -48,14 +48,14 @@ async def collect_container_ram_gb(
             cache = stats_map.get("inactive_file") or 0
         net_bytes = max(0, usage - cache)
         return round(net_bytes / (1024**3), 4)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("collect_container_ram_gb(%s): %s", container_id, exc)
         return None
 
 
 async def collect_container_vram_gb(
-    docker_service: "DockerService", container_id: str
-) -> Optional[float]:
+    docker_service: DockerService, container_id: str
+) -> float | None:
     """Return GPU VRAM used by the container's host-PID tree, in GB.
 
     Steps:
@@ -82,16 +82,16 @@ async def collect_container_vram_gb(
 
         total_bytes = sum(gpu_mem.get(pid, 0) for pid in pid_set)
         return round(total_bytes / (1024**3), 4)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("collect_container_vram_gb(%s): %s", container_id, exc)
         return None
 
 
-async def collect_workspace_disk_gb(job_id: str, jobs_dir: str) -> Optional[float]:
+async def collect_workspace_disk_gb(job_id: str, jobs_dir: str) -> float | None:
     """Return disk usage of the job workspace directory in GB, or None."""
     try:
         return await asyncio.to_thread(_dir_size_gb, Path(jobs_dir) / job_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("collect_workspace_disk_gb(%s): %s", job_id, exc)
         return None
 
@@ -101,16 +101,14 @@ async def collect_workspace_disk_gb(job_id: str, jobs_dir: str) -> Optional[floa
 # ---------------------------------------------------------------------------
 
 
-def _get_container_pid(
-    docker_service: "DockerService", container_id: str
-) -> Optional[int]:
+def _get_container_pid(docker_service: DockerService, container_id: str) -> int | None:
     """Return the host-namespace root PID for *container_id*, or None."""
     try:
         container = docker_service._client.containers.get(container_id)
         container.reload()
         pid = container.attrs.get("State", {}).get("Pid")
         return int(pid) if pid else None
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -124,11 +122,11 @@ def _collect_pid_tree(root_pid: int) -> set[int]:
         for child in proc.children(recursive=True):
             pids.add(child.pid)
         return pids
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {root_pid}
 
 
-def _dir_size_gb(path: Path) -> Optional[float]:
+def _dir_size_gb(path: Path) -> float | None:
     """Recursively sum file sizes under *path* and return GB, or None."""
     if not path.exists():
         return None

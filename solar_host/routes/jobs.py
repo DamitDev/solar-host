@@ -168,7 +168,7 @@ async def delete_job(job_id: str, request: Request) -> dict:
     # before Docker even sends SIGKILL.
     try:
         await executor.await_job(job_id, timeout=20.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Timed out waiting for job %r to finish after cancel", job_id)
     except Exception:
         logger.exception(

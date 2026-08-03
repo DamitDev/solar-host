@@ -1,12 +1,12 @@
 """LlamaCpp backend runner implementation."""
 
 import re
-from typing import List, Optional, Any, Dict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from solar_host.backends.base import BackendRunner, RuntimeStateUpdate
-from solar_host.models.base import InstancePhase, GenerationMetrics
 from solar_host.config import settings
+from solar_host.models.base import GenerationMetrics, InstancePhase
 
 
 class LlamaCppRunner(BackendRunner):
@@ -41,7 +41,7 @@ class LlamaCppRunner(BackendRunner):
     def get_backend_type(self) -> str:
         return "llamacpp"
 
-    def build_command(self, instance: Any) -> List[str]:
+    def build_command(self, instance: Any) -> list[str]:
         """Build llama-server command from instance config."""
         config = instance.config
         cmd = [
@@ -157,7 +157,7 @@ class LlamaCppRunner(BackendRunner):
     def get_health_endpoint(self) -> str:
         return "/health"
 
-    def get_supported_endpoints(self) -> List[str]:
+    def get_supported_endpoints(self) -> list[str]:
         return [
             "/v1/chat/completions",
             "/v1/completions",
@@ -166,7 +166,7 @@ class LlamaCppRunner(BackendRunner):
             "/v1/rerank",
         ]
 
-    def get_supported_endpoints_for_model_type(self, model_type: str) -> List[str]:
+    def get_supported_endpoints_for_model_type(self, model_type: str) -> list[str]:
         """Return endpoints based on llama.cpp model_type (llm, embedding, reranker)."""
         if model_type == "embedding":
             return ["/v1/embeddings", "/v1/models"]
@@ -174,7 +174,7 @@ class LlamaCppRunner(BackendRunner):
             return ["/v1/rerank", "/v1/models"]
         return ["/v1/chat/completions", "/v1/completions", "/v1/models"]
 
-    def initialize_context(self) -> Dict[str, Any]:
+    def initialize_context(self) -> dict[str, Any]:
         """Initialize parsing context for llama.cpp log parsing."""
         return {
             "active_slots": set(),
@@ -191,8 +191,8 @@ class LlamaCppRunner(BackendRunner):
         }
 
     def parse_log_line(
-        self, instance_id: str, line: str, context: Dict[str, Any]
-    ) -> Optional[RuntimeStateUpdate]:
+        self, instance_id: str, line: str, context: dict[str, Any]
+    ) -> RuntimeStateUpdate | None:
         """Parse a llama-server log line and return state update if changed."""
         slots = context.get("active_slots", set())
         last_state = context.get("last_state", {})
@@ -203,7 +203,7 @@ class LlamaCppRunner(BackendRunner):
         if m:
             try:
                 slot_id = int(m.group(1))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 slot_id = -1
             slots.add(slot_id)
             context["active_slots"] = slots
@@ -225,7 +225,7 @@ class LlamaCppRunner(BackendRunner):
                 slot_id = int(m.group(1))
                 task_id = int(m.group(2))
                 prompt_tokens = int(m.group(3))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 slot_id, task_id, prompt_tokens = -1, -1, None
             slots.add(slot_id)
             context["active_slots"] = slots
@@ -237,7 +237,7 @@ class LlamaCppRunner(BackendRunner):
                     "slot_id": slot_id,
                     "task_id": task_id,
                     "prompt_tokens": prompt_tokens,
-                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "started_at": datetime.now(UTC).isoformat(),
                 }
             )
             pending_by_slot[slot_id] = pending
@@ -260,7 +260,7 @@ class LlamaCppRunner(BackendRunner):
         if m:
             try:
                 progress = float(m.group(1))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 progress = None
             return self._create_update(
                 busy=True if len(slots) > 0 else last_state.get("busy", False),
@@ -294,7 +294,7 @@ class LlamaCppRunner(BackendRunner):
             try:
                 idx = int(m.group(1))
                 total = int(m.group(2))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 idx, total = None, None
             return self._create_update(
                 busy=True if len(slots) > 0 else last_state.get("busy", False),
@@ -320,7 +320,7 @@ class LlamaCppRunner(BackendRunner):
                 gen_tokens = int(m.group(2))
                 ms_per_tok = float(m.group(3))
                 tps = float(m.group(4))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 gen_tokens, ms_per_tok, tps = None, None, None
 
             # Update pending metrics for last active slot
@@ -366,7 +366,7 @@ class LlamaCppRunner(BackendRunner):
         if m:
             try:
                 slot_id = int(m.group(1))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 slot_id = -1
             if slot_id in slots:
                 slots.discard(slot_id)
@@ -384,7 +384,7 @@ class LlamaCppRunner(BackendRunner):
                     decode_tps=pending.get("decode_tps"),
                     decode_ms_per_token=pending.get("decode_ms_per_token"),
                     started_at=pending.get("started_at"),
-                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    finished_at=datetime.now(UTC).isoformat(),
                 )
                 recent = context.get("recent_generations", [])
                 recent.append(metrics)
@@ -448,26 +448,26 @@ class LlamaCppRunner(BackendRunner):
         self,
         busy: bool,
         phase: InstancePhase,
-        prefill_progress: Optional[float],
+        prefill_progress: float | None,
         active_slots: int,
-        last_state: Dict[str, Any],
-        context: Dict[str, Any],
-        slot_id: Optional[int] = None,
-        task_id: Optional[int] = None,
-        prefill_prompt_tokens: Optional[int] = None,
-        generated_tokens: Optional[int] = None,
-        decode_tps: Optional[float] = None,
-        decode_ms_per_token: Optional[float] = None,
-        checkpoint_index: Optional[int] = None,
-        checkpoint_total: Optional[int] = None,
-    ) -> Optional[RuntimeStateUpdate]:
+        last_state: dict[str, Any],
+        context: dict[str, Any],
+        slot_id: int | None = None,
+        task_id: int | None = None,
+        prefill_prompt_tokens: int | None = None,
+        generated_tokens: int | None = None,
+        decode_tps: float | None = None,
+        decode_ms_per_token: float | None = None,
+        checkpoint_index: int | None = None,
+        checkpoint_total: int | None = None,
+    ) -> RuntimeStateUpdate | None:
         """Create a RuntimeStateUpdate if state has changed."""
         # Normalize prefill_progress
-        pp: Optional[float] = None
+        pp: float | None = None
         if prefill_progress is not None:
             try:
                 pp = float(prefill_progress)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pp = None
 
         # Check if state changed
@@ -520,9 +520,7 @@ class LlamaCppRunner(BackendRunner):
             checkpoint_total=checkpoint_total,
         )
 
-    def get_last_generation(
-        self, context: Dict[str, Any]
-    ) -> Optional[GenerationMetrics]:
+    def get_last_generation(self, context: dict[str, Any]) -> GenerationMetrics | None:
         """Get the last generation metrics from context."""
         recent = context.get("recent_generations", [])
         if not recent:

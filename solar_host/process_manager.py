@@ -1,39 +1,39 @@
 """Process manager for solar-host with multi-backend support."""
 
+import asyncio
 import logging
-import subprocess
-import socket
-import time
-import uuid
+import os
 import queue
 import shutil
-import os
-from pathlib import Path
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
-from collections import deque
-import asyncio
+import socket
+import subprocess
 import threading
+import time
+import uuid
+from collections import deque
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
+from solar_host.backends.base import BackendRunner
+from solar_host.backends.huggingface import HuggingFaceRunner
+from solar_host.backends.llamacpp import LlamaCppRunner
+from solar_host.config import config_manager, parse_instance_config, settings
 from solar_host.models import (
+    BackendType,
+    GenerationMetrics,
     Instance,
-    InstanceStatus,
     InstancePriority,
-    LogMessage,
     InstanceRuntimeState,
     InstanceStateEvent,
-    GenerationMetrics,
-    BackendType,
+    InstanceStatus,
+    LogMessage,
 )
-from solar_host.config import settings, config_manager, parse_instance_config
-from solar_host.backends.base import BackendRunner
-from solar_host.backends.llamacpp import LlamaCppRunner
-from solar_host.backends.huggingface import HuggingFaceRunner
 from solar_host.ws_client import (
-    get_clients,
-    broadcast_log_batch,
     broadcast_instance_state_batch,
     broadcast_instances_update,
+    broadcast_log_batch,
+    get_clients,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,28 +70,28 @@ class ProcessManager:
     """Manages model server processes across multiple backends."""
 
     def __init__(self):
-        self.processes: Dict[str, subprocess.Popen] = {}
-        self.log_buffers: Dict[str, deque] = {}
-        self.log_sequences: Dict[str, int] = {}
-        self.log_threads: Dict[str, threading.Thread] = {}
+        self.processes: dict[str, subprocess.Popen] = {}
+        self.log_buffers: dict[str, deque] = {}
+        self.log_sequences: dict[str, int] = {}
+        self.log_threads: dict[str, threading.Thread] = {}
         self.log_dir = Path(settings.log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Runtime state streaming (ephemeral)
-        self.state_buffers: Dict[str, deque] = {}
-        self.state_sequences: Dict[str, int] = {}
+        self.state_buffers: dict[str, deque] = {}
+        self.state_sequences: dict[str, int] = {}
 
         # Per-instance parsing context (managed by backend runners)
-        self.instance_contexts: Dict[str, Dict[str, Any]] = {}
+        self.instance_contexts: dict[str, dict[str, Any]] = {}
 
         # Per-instance runner reference
-        self.instance_runners: Dict[str, BackendRunner] = {}
+        self.instance_runners: dict[str, BackendRunner] = {}
 
         # Batched emission queues (thread-safe, drained by _flush_loop).
         # Bounded to prevent OOM if the flush loop or WS broadcast stalls.
         self._log_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
         self._state_queue: queue.Queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: asyncio.Task | None = None
         self._child_exit_lock = threading.Lock()
 
     def _is_port_available(self, port: int) -> bool:
@@ -215,7 +215,7 @@ class ProcessManager:
                     seq = self.log_sequences[instance_id]
                     self.log_sequences[instance_id] += 1
 
-                    timestamp = datetime.now(timezone.utc).isoformat()
+                    timestamp = datetime.now(UTC).isoformat()
                     log_msg = LogMessage(
                         seq=seq, timestamp=timestamp, line=decoded_line
                     )
@@ -232,10 +232,10 @@ class ProcessManager:
                         )
                         if state_update:
                             self._emit_state_event(instance_id, state_update)
-                    except Exception:
+                    except Exception:  # noqa: S110, BLE001
                         # Parsing errors should not break logging
                         pass
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Error reading logs for %s: %s", instance_id, e)
         finally:
             # stdout closed or reader error: child likely exited — reconcile state
@@ -266,14 +266,14 @@ class ProcessManager:
 
     async def _flush_pending(self):
         """Drain both queues and emit batched events."""
-        log_entries: List[dict] = []
+        log_entries: list[dict] = []
         while True:
             try:
                 log_entries.append(self._log_queue.get_nowait())
             except queue.Empty:
                 break
 
-        latest_states: Dict[str, dict] = {}
+        latest_states: dict[str, dict] = {}
         while True:
             try:
                 entry = self._state_queue.get_nowait()
@@ -338,7 +338,7 @@ class ProcessManager:
         seq = self.state_sequences[instance_id]
         self.state_sequences[instance_id] += 1
 
-        now_ts = datetime.now(timezone.utc).isoformat()
+        now_ts = datetime.now(UTC).isoformat()
         state = InstanceRuntimeState(
             instance_id=instance_id,
             busy=update.busy,
@@ -394,7 +394,7 @@ class ProcessManager:
         except queue.Full:
             pass
 
-    def get_last_generation(self, instance_id: str) -> Optional[GenerationMetrics]:
+    def get_last_generation(self, instance_id: str) -> GenerationMetrics | None:
         """Get the last generation metrics for an instance."""
         runner = self.instance_runners.get(instance_id)
         context = self.instance_contexts.get(instance_id, {})
@@ -413,9 +413,7 @@ class ProcessManager:
             await asyncio.sleep(1)
         return False
 
-    async def _try_start_instance(
-        self, instance_id: str, attempt: int
-    ) -> Optional[bool]:
+    async def _try_start_instance(self, instance_id: str, attempt: int) -> bool | None:
         """Single start attempt. Returns True/False for final result, None to retry."""
         instance = config_manager.get_instance(instance_id)
         if not instance:
@@ -470,7 +468,7 @@ class ProcessManager:
             run_env["PYTHONUNBUFFERED"] = "1"
             run_cmd = ["stdbuf", "-oL"] + cmd if _HAS_STDBUF else cmd
 
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # noqa: ASYNC220 — spawn is non-blocking; logs are drained by a dedicated thread (_read_logs), never in the event loop
                 run_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -502,7 +500,7 @@ class ProcessManager:
             if process.poll() is None:
                 instance.status = InstanceStatus.RUNNING
                 instance.pid = process.pid
-                instance.started_at = datetime.now(timezone.utc)
+                instance.started_at = datetime.now(UTC)
                 instance.retry_count = 0
                 config_manager.update_instance(instance_id, instance)
 
@@ -529,7 +527,7 @@ class ProcessManager:
                     return None  # signal retry
                 return False
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             instance = config_manager.get_instance(instance_id)
             if instance:
                 instance.status = InstanceStatus.FAILED
@@ -594,9 +592,9 @@ class ProcessManager:
 
             return True
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             instance.status = InstanceStatus.FAILED
-            instance.error_message = f"Failed to stop: {str(e)}"
+            instance.error_message = f"Failed to stop: {e!s}"
             config_manager.update_instance(instance_id, instance)
             return False
 
@@ -609,7 +607,7 @@ class ProcessManager:
                 # Keep only the most recent log
                 if log_file.stat().st_mtime < time.time() - 300:  # 5 minutes old
                     log_file.unlink()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Error cleaning up logs: %s", e)
 
     async def restart_instance(self, instance_id: str) -> bool:
@@ -674,7 +672,7 @@ class ProcessManager:
 
         return instance
 
-    def get_log_buffer(self, instance_id: str) -> List[LogMessage]:
+    def get_log_buffer(self, instance_id: str) -> list[LogMessage]:
         """Get log buffer for an instance."""
         if instance_id in self.log_buffers:
             return list(self.log_buffers[instance_id])
@@ -684,7 +682,7 @@ class ProcessManager:
         """Get next sequence number for an instance."""
         return self.log_sequences.get(instance_id, 0)
 
-    def get_state_buffer(self, instance_id: str) -> List[InstanceStateEvent]:
+    def get_state_buffer(self, instance_id: str) -> list[InstanceStateEvent]:
         """Get state buffer for an instance."""
         if instance_id in self.state_buffers:
             return list(self.state_buffers[instance_id])
@@ -726,7 +724,7 @@ class ProcessManager:
             try:
                 process.terminate()
                 process.wait(timeout=5)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 process.kill()
                 process.wait()
 
@@ -772,7 +770,7 @@ class ProcessManager:
                 config_manager.update_instance(instance.id, instance)
 
     @staticmethod
-    def _kill_stale_pid(pid: Optional[int]) -> None:
+    def _kill_stale_pid(pid: int | None) -> None:
         """Best-effort kill of a stale PID left from a previous run."""
         if pid is None:
             return

@@ -109,10 +109,12 @@ def manager(store: JobStore, tmp_path: Path) -> ResourceManager:
 
 @pytest.fixture()
 def client(manager: ResourceManager):
-    with patch("solar_host.docker.service.DockerService"):
-        with TestClient(app, raise_server_exceptions=True) as c:
-            app.state.resource_manager = manager
-            yield c
+    with (
+        patch("solar_host.docker.service.DockerService"),
+        TestClient(app, raise_server_exceptions=True) as c,
+    ):
+        app.state.resource_manager = manager
+        yield c
 
 
 # ---------------------------------------------------------------------------

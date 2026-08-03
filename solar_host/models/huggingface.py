@@ -1,7 +1,8 @@
 """HuggingFace backend configuration models."""
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import Optional, List, Literal, Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _strip_api_key(data: Any) -> Any:
@@ -27,10 +28,10 @@ class HuggingFaceCausalConfig(BaseModel):
     backend_type: Literal["huggingface_causal"] = Field(
         default="huggingface_causal", description="Backend type identifier"
     )
-    model_source: Optional[str] = Field(
+    model_source: str | None = Field(
         default=None, description="Model source URI (e.g. local://model_dir)"
     )
-    model_id: Optional[str] = Field(
+    model_id: str | None = Field(
         default=None,
         description="HuggingFace model ID or local path (e.g., 'meta-llama/Llama-2-7b-hf')",
     )
@@ -56,7 +57,7 @@ class HuggingFaceCausalConfig(BaseModel):
         default=True, description="Use Flash Attention 2 if available"
     )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )
 
@@ -77,10 +78,10 @@ class HuggingFaceClassificationConfig(BaseModel):
     backend_type: Literal["huggingface_classification"] = Field(
         default="huggingface_classification", description="Backend type identifier"
     )
-    model_source: Optional[str] = Field(
+    model_source: str | None = Field(
         default=None, description="Model source URI (e.g. local://model_dir)"
     )
-    model_id: Optional[str] = Field(
+    model_id: str | None = Field(
         default=None, description="HuggingFace model ID or local path"
     )
 
@@ -100,14 +101,14 @@ class HuggingFaceClassificationConfig(BaseModel):
     max_length: int = Field(
         default=512, description="Maximum sequence length for classification"
     )
-    labels: Optional[List[str]] = Field(
+    labels: list[str] | None = Field(
         default=None, description="Optional label names mapping (index -> label name)"
     )
     trust_remote_code: bool = Field(
         default=False, description="Whether to trust remote code from HuggingFace"
     )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )
 
@@ -128,10 +129,10 @@ class HuggingFaceEmbeddingConfig(BaseModel):
     backend_type: Literal["huggingface_embedding"] = Field(
         default="huggingface_embedding", description="Backend type identifier"
     )
-    model_source: Optional[str] = Field(
+    model_source: str | None = Field(
         default=None, description="Model source URI (e.g. local://model_dir)"
     )
-    model_id: Optional[str] = Field(
+    model_id: str | None = Field(
         default=None,
         description="HuggingFace model ID or local path (e.g., 'sentence-transformers/all-MiniLM-L6-v2')",
     )
@@ -159,7 +160,7 @@ class HuggingFaceEmbeddingConfig(BaseModel):
         default=False, description="Whether to trust remote code from HuggingFace"
     )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )
 
@@ -183,10 +184,10 @@ class HuggingFaceVisionConfig(BaseModel):
     backend_type: Literal["huggingface_vision"] = Field(
         default="huggingface_vision", description="Backend type identifier"
     )
-    model_source: Optional[str] = Field(
+    model_source: str | None = Field(
         default=None, description="Model source URI (e.g. local://model_dir)"
     )
-    model_id: Optional[str] = Field(
+    model_id: str | None = Field(
         default=None,
         description="HuggingFace model ID or local path (e.g., 'Qwen/Qwen2.5-VL-7B-Instruct')",
     )
@@ -212,6 +213,6 @@ class HuggingFaceVisionConfig(BaseModel):
         default=True, description="Use Flash Attention 2 if available"
     )
     host: str = Field(default="0.0.0.0", description="Host to bind to")
-    port: Optional[int] = Field(
+    port: int | None = Field(
         default=None, description="Port (auto-assigned if not specified)"
     )

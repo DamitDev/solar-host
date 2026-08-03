@@ -22,21 +22,21 @@ Usage:
 import argparse
 import base64
 import io
+import json
+import logging
 import time
 import uuid
-import logging
-from datetime import datetime, timezone
-from typing import Any, Optional, List, Dict, Union, TYPE_CHECKING
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import torch
-from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
 import uvicorn
-import json
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from transformers import (
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 # Capabilities exposed via /v1/models, used by downstream apps
 # (e.g. Orchestrator) to differentiate text-only vs multimodal models.
-MODEL_TYPE_CAPABILITIES: Dict[str, List[str]] = {
+MODEL_TYPE_CAPABILITIES: dict[str, list[str]] = {
     "causal": ["completion"],
     "classification": ["classification"],
     "embedding": ["embedding"],
@@ -72,35 +72,33 @@ class ChatMessage(BaseModel):
     role: str
     # Either a plain string (text-only) or an OpenAI-style list of content parts
     # like [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"..."}}]
-    content: Union[str, List[Dict[str, Any]]]
-    name: Optional[str] = None
+    content: str | list[dict[str, Any]]
+    name: str | None = None
 
 
 class ChatCompletionRequest(BaseModel):
     model: str
-    messages: List[ChatMessage]
-    temperature: Optional[float] = 1.0
-    top_p: Optional[float] = 1.0
-    max_tokens: Optional[int] = None
-    stream: Optional[bool] = False
-    stop: Optional[List[str]] = None
+    messages: list[ChatMessage]
+    temperature: float | None = 1.0
+    top_p: float | None = 1.0
+    max_tokens: int | None = None
+    stream: bool | None = False
+    stop: list[str] | None = None
 
 
 class CompletionRequest(BaseModel):
     model: str
     prompt: str
-    temperature: Optional[float] = 1.0
-    top_p: Optional[float] = 1.0
-    max_tokens: Optional[int] = None
-    stream: Optional[bool] = False
-    stop: Optional[List[str]] = None
+    temperature: float | None = 1.0
+    top_p: float | None = 1.0
+    max_tokens: int | None = None
+    stream: bool | None = False
+    stop: list[str] | None = None
 
 
 class ClassifyRequest(BaseModel):
     model: str
-    input: Union[str, List[str]] = Field(
-        ..., description="Text or list of texts to classify"
-    )
+    input: str | list[str] = Field(..., description="Text or list of texts to classify")
     return_all_scores: bool = Field(
         default=False,
         description="Return scores for all classes, not just top prediction",
@@ -118,7 +116,7 @@ class ClassifyChoice(BaseModel):
     index: int
     label: str
     score: float
-    all_scores: Optional[List[ClassifyScoreItem]] = Field(
+    all_scores: list[ClassifyScoreItem] | None = Field(
         default=None, description="Scores for all classes (when return_all_scores=True)"
     )
 
@@ -127,8 +125,8 @@ class ClassifyResponse(BaseModel):
     id: str
     object: str = "classification"
     model: str
-    choices: List[ClassifyChoice]
-    usage: Dict[str, int]
+    choices: list[ClassifyChoice]
+    usage: dict[str, int]
 
 
 class ChatCompletionChoice(BaseModel):
@@ -142,8 +140,8 @@ class ChatCompletionResponse(BaseModel):
     object: str = "chat.completion"
     created: int
     model: str
-    choices: List[ChatCompletionChoice]
-    usage: Dict[str, int]
+    choices: list[ChatCompletionChoice]
+    usage: dict[str, int]
 
 
 class CompletionChoice(BaseModel):
@@ -157,8 +155,8 @@ class CompletionResponse(BaseModel):
     object: str = "text_completion"
     created: int
     model: str
-    choices: List[CompletionChoice]
-    usage: Dict[str, int]
+    choices: list[CompletionChoice]
+    usage: dict[str, int]
 
 
 class ModelInfo(BaseModel):
@@ -170,28 +168,26 @@ class ModelInfo(BaseModel):
 
 class EmbeddingRequest(BaseModel):
     model: str
-    input: Union[str, List[str]] = Field(
-        ..., description="Text or list of texts to embed"
-    )
-    encoding_format: Optional[str] = Field(
+    input: str | list[str] = Field(..., description="Text or list of texts to embed")
+    encoding_format: str | None = Field(
         default="float", description="Encoding format: 'float' or 'base64'"
     )
-    dimensions: Optional[int] = Field(
+    dimensions: int | None = Field(
         default=None, description="Optional dimension truncation"
     )
 
 
 class EmbeddingData(BaseModel):
     object: str = "embedding"
-    embedding: List[float]
+    embedding: list[float]
     index: int
 
 
 class EmbeddingResponse(BaseModel):
     object: str = "list"
-    data: List[EmbeddingData]
+    data: list[EmbeddingData]
     model: str
-    usage: Dict[str, int]
+    usage: dict[str, int]
 
 
 # ============================================================================
@@ -203,22 +199,20 @@ class ServerState:
     """Global server state holding the loaded model."""
 
     def __init__(self):
-        self.model: Optional["PreTrainedModel"] = None
-        self.tokenizer: Optional[
-            Union["PreTrainedTokenizer", "PreTrainedTokenizerFast"]
-        ] = None
+        self.model: PreTrainedModel | None = None
+        self.tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
         # Multi-modal processor (used for vision/multimodal models). Wraps
         # the tokenizer plus image preprocessor.
-        self.processor: Optional[Any] = None
+        self.processor: Any | None = None
         self.model_id: str = ""
         self.model_type: str = "causal"
         self.alias: str = ""
         self.device: str = "cpu"
         self.max_length: int = 4096
-        self.labels: Optional[List[str]] = None
+        self.labels: list[str] | None = None
         self.normalize_embeddings: bool = True
         self.api_key: str = ""
-        self.created_at: int = int(datetime.now(timezone.utc).timestamp())
+        self.created_at: int = int(datetime.now(UTC).timestamp())
 
     def ensure_loaded(self) -> None:
         """Ensure model and tokenizer are loaded, raise if not."""
@@ -239,9 +233,7 @@ class ServerState:
     def get_dtype(self, dtype_str: str) -> torch.dtype:
         """Resolve dtype string to torch dtype."""
         if dtype_str == "auto":
-            if self.device == "cuda":
-                return torch.float16
-            elif self.device == "mps":
+            if self.device == "cuda" or self.device == "mps":
                 return torch.float16
             else:
                 return torch.float32
@@ -260,7 +252,7 @@ class ServerState:
         device: str,
         dtype: str,
         max_length: int,
-        labels: Optional[List[str]],
+        labels: list[str] | None,
         trust_remote_code: bool,
         use_flash_attention: bool,
         normalize_embeddings: bool = True,
@@ -299,7 +291,7 @@ class ServerState:
         if model_type == "causal":
             from transformers import AutoModelForCausalLM
 
-            model_kwargs: Dict[str, object] = {
+            model_kwargs: dict[str, object] = {
                 "dtype": model_dtype,
                 "trust_remote_code": trust_remote_code,
                 "device_map": self.device if self.device != "mps" else None,
@@ -363,7 +355,7 @@ class ServerState:
             )
             self.processor = processor
 
-            model_kwargs: Dict[str, object] = {
+            model_kwargs: dict[str, object] = {
                 "dtype": model_dtype,
                 "trust_remote_code": trust_remote_code,
                 "device_map": self.device if self.device != "mps" else None,
@@ -393,7 +385,7 @@ security = HTTPBearer(auto_error=False)
 
 async def verify_api_key(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
     """Verify API key from Authorization header."""
     if not state.api_key:
@@ -521,7 +513,7 @@ def _load_image_from_url(url: str):
 
     if url.startswith("data:"):
         try:
-            header, b64 = url.split(",", 1)
+            _header, b64 = url.split(",", 1)
         except ValueError as exc:
             raise ValueError(f"Malformed data URI: {url[:60]}...") from exc
         raw = base64.b64decode(b64)
@@ -539,23 +531,23 @@ def _load_image_from_url(url: str):
 
 
 def _normalize_messages_for_processor(
-    messages: List[ChatMessage],
-) -> tuple[List[Dict[str, Any]], List[Any]]:
+    messages: list[ChatMessage],
+) -> tuple[list[dict[str, Any]], list[Any]]:
     """Convert OpenAI-style messages into processor-friendly form + image list.
 
     Each `image_url` content part is downloaded into a PIL image and replaced
     by ``{"type": "image"}`` (the convention most multimodal HF processors expect
     for ``apply_chat_template``).
     """
-    norm_messages: List[Dict[str, Any]] = []
-    images: List[Any] = []
+    norm_messages: list[dict[str, Any]] = []
+    images: list[Any] = []
 
     for m in messages:
         if isinstance(m.content, str):
             norm_messages.append({"role": m.role, "content": m.content})
             continue
 
-        parts: List[Dict[str, Any]] = []
+        parts: list[dict[str, Any]] = []
         for part in m.content:
             ptype = part.get("type")
             if ptype == "text":
@@ -587,7 +579,7 @@ async def _chat_completion_causal(
     logger.info(f"[REQUEST] model={state.alias} endpoint=/v1/chat/completions")
 
     # Causal text-only path expects plain string content.
-    plain_messages: List[Dict[str, str]] = []
+    plain_messages: list[dict[str, str]] = []
     for m in request.messages:
         if not isinstance(m.content, str):
             raise HTTPException(
@@ -684,7 +676,7 @@ async def _chat_completion_vision(
     )
     prompt = str(template_result)
 
-    proc_kwargs: Dict[str, Any] = {
+    proc_kwargs: dict[str, Any] = {
         "text": prompt,
         "return_tensors": "pt",
     }
@@ -765,8 +757,8 @@ async def chat_completions(
         return await _chat_completion_causal(request)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"[ERROR] {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ERROR] {e!s}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -841,8 +833,8 @@ async def completions(request: CompletionRequest, _: bool = Depends(verify_api_k
             },
         )
 
-    except Exception as e:
-        logger.error(f"[ERROR] {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ERROR] {e!s}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -866,7 +858,7 @@ async def classify(request: ClassifyRequest, _: bool = Depends(verify_api_key)):
 
     try:
         # Handle single or batch input
-        texts: List[str] = (
+        texts: list[str] = (
             request.input if isinstance(request.input, list) else [request.input]
         )
 
@@ -902,7 +894,7 @@ async def classify(request: ClassifyRequest, _: bool = Depends(verify_api_key)):
                 label = state.labels[best_idx]
 
             # Build all_scores if requested
-            all_scores: Optional[List[ClassifyScoreItem]] = None
+            all_scores: list[ClassifyScoreItem] | None = None
             if request.return_all_scores:
                 all_scores = []
                 for class_idx in range(prob.shape[0]):
@@ -940,8 +932,8 @@ async def classify(request: ClassifyRequest, _: bool = Depends(verify_api_key)):
             },
         )
 
-    except Exception as e:
-        logger.error(f"[ERROR] {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ERROR] {e!s}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -969,7 +961,7 @@ async def embeddings(request: EmbeddingRequest, _: bool = Depends(verify_api_key
 
     try:
         # Handle single or batch input
-        texts: List[str] = (
+        texts: list[str] = (
             request.input if isinstance(request.input, list) else [request.input]
         )
 
@@ -1040,8 +1032,8 @@ async def embeddings(request: EmbeddingRequest, _: bool = Depends(verify_api_key
             },
         )
 
-    except Exception as e:
-        logger.error(f"[ERROR] {str(e)}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ERROR] {e!s}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
