@@ -351,9 +351,7 @@ class _FakeOrasClient:
             "layers": [
                 {
                     "digest": f"sha256:{digest}",
-                    "annotations": {
-                        "org.opencontainers.image.title": name
-                    },
+                    "annotations": {"org.opencontainers.image.title": name},
                 }
                 for name, digest in self._file_digests.items()
             ]

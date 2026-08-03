@@ -364,9 +364,7 @@ def _verify_pulled_digests(
 
     expected: dict[str, str] = {}
     for layer in manifest.get("layers", []):
-        title = (layer.get("annotations") or {}).get(
-            "org.opencontainers.image.title"
-        )
+        title = (layer.get("annotations") or {}).get("org.opencontainers.image.title")
         digest = layer.get("digest", "")
         if title and digest.startswith("sha256:"):
             expected[title] = digest[len("sha256:") :]
@@ -394,9 +392,7 @@ def _verify_pulled_digests(
                 harbor_ref,
             )
         elif h != want:
-            problems.append(
-                f"{path.name}: digest mismatch (got {h}, want {want})"
-            )
+            problems.append(f"{path.name}: digest mismatch (got {h}, want {want})")
     for name in expected:
         if name not in actual:
             problems.append(f"{name}: missing on disk after pull")
