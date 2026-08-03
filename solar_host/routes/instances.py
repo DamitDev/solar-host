@@ -36,6 +36,11 @@ async def create_instance(data: InstanceCreate):
             managed_by=data.managed_by,
             intent_id=data.intent_id,
         )
+        # Push the new instance so solar-control's Redis cache learns about
+        # it immediately (flat WS shape); otherwise the gateway's HTTP poll
+        # fallback re-seeds the cache with the nested /instances shape and
+        # the reconciler's view of the instance lags (D-017).
+        process_manager._push_instances_update()
         return InstanceResponse(
             instance=instance, message=f"Instance {instance.id} created successfully"
         )

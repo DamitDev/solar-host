@@ -131,6 +131,17 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
     )
 
 
+@router.get("", response_model=list[JobStateResponse])
+async def list_jobs(request: Request) -> list[JobStateResponse]:
+    """Return the current state of all jobs.
+
+    Consumed by solar-control's migration guard (check_no_active_training)
+    to enforce that active training jobs are non-migratable workloads.
+    """
+    store = request.app.state.job_store
+    return [JobStateResponse.from_job_state(j) for j in store.get_all()]
+
+
 @router.get("/{job_id}", response_model=JobStateResponse)
 async def get_job(job_id: str, request: Request) -> JobStateResponse:
     """Return the current state of a job, including per-step log snippets."""

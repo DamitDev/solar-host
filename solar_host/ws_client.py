@@ -235,8 +235,12 @@ class SolarControlClient:
         logger.info(
             "SolarControlClient: Registered as '%s' (id: %s)", host_name, self.host_id
         )
-        if was_pending:
-            asyncio.create_task(self._post_approval_sync())
+        # Re-send registration + health after approval regardless of the
+        # pending state. The initial _send_registration from _on_connect is
+        # swallowed by the `connected` guard (the attribute flips only after
+        # connect() returns), so pre-registered hosts would otherwise NEVER
+        # deliver roles/gpu_type/instances to solar-control.
+        asyncio.create_task(self._post_approval_sync())
 
     def _on_pending(self, data: dict):
         """Handle pending event - host is waiting for admin approval."""
@@ -262,7 +266,13 @@ class SolarControlClient:
 
     async def _send_registration(self):
         """Send registration event with instance list."""
-        if not self._sio or not self._sio.connected:
+        # NOTE: guard on self._connected (namespace-level flag set in
+        # _on_connect), NOT on self._sio.connected — that transport flag
+        # only flips after connect() returns, while _on_connect (and the
+        # registration_ack event) fire BEFORE that, so a `sio.connected`
+        # guard silently swallows the only registration ever sent for
+        # pre-registered hosts.
+        if not self._sio or not self._connected:
             return
 
         from solar_host.config import config_manager
@@ -316,7 +326,7 @@ class SolarControlClient:
 
     async def _emit(self, event: str, data: dict):
         """Emit event to solar-control (no-op if disconnected)."""
-        if not self._sio or not self._sio.connected:
+        if not self._sio or not self._connected:
             return
         try:
             await self._sio.emit(event, data, namespace=self.NAMESPACE)
