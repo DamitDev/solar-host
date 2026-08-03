@@ -138,6 +138,23 @@ def repo_base_uri(uri: str) -> str:
     return uri
 
 
+def _select_gguf_path(model_dir: Path) -> Path | None:
+    """Return the largest ``*.gguf`` at the root of *model_dir*, or None.
+
+    Used for llama.cpp + ``repo://`` artifacts: llama-server needs a file,
+    and when the artifact carries multiple GGUFs (e.g. quantised variants)
+    the largest one is the definitive model.  Subdirectories are not
+    scanned — ORAS pulls are flat and an explicit subpath already exists
+    for nested files.
+    """
+    candidates = [
+        p for p in model_dir.glob("*.gguf") if p.is_file() and not p.is_symlink()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_size)
+
+
 def _manifest_path() -> Path:
     return get_models_dir() / MANIFEST_FILENAME
 
@@ -462,6 +479,7 @@ def pull_model(
     version: str | None = None,
     checksum: str | None = None,
     metadata: dict | None = None,
+    backend_type: str | None = None,
 ) -> dict:
     """Download a model from Harbor or HuggingFace Hub and record it in the manifest.
 
@@ -470,6 +488,14 @@ def pull_model(
 
     Returns a dict with keys ``path``, ``cached``, and ``source_uri``.
     Raises ``ModelPullError`` for all expected failure conditions.
+
+    GGUF selection: when the caller declares a llama.cpp backend
+    (``backend_type == "llamacpp"``) and the artifact comes from Harbor
+    (``repo://``), the returned path resolves to the largest ``*.gguf``
+    inside the artifact directory instead of the directory itself — a
+    llama-server model must be a file. An explicit subpath in the URI wins
+    over selection. ``local://`` and ``huggingface://`` artifacts are never
+    selected (they are used as directories).
     """
     # 1. Validate that source_uri scheme matches the declared source.
     expected_prefix = _SOURCE_URI_PREFIXES.get(source)
@@ -496,6 +522,12 @@ def pull_model(
         subpath = extract_repo_subpath(source_uri)
         cache_key = repo_base_uri(source_uri)
 
+        # 2b. GGUF selection for llama.cpp + Harbor artifacts: the returned
+        #     path points at the largest *.gguf inside the artifact directory
+        #     instead of the directory (llama-server needs a file).  An
+        #     explicit subpath always wins over selection.
+        select_gguf = source == "harbor" and backend_type == "llamacpp" and not subpath
+
         # 2. Cache check — manifest is the single source of truth, keyed by
         #    the base URI (the artifact identity).  Verify the resolved path
         #    (dir + optional subpath) still exists on disk AND the recorded
@@ -505,9 +537,18 @@ def pull_model(
         if cached_entry is not None:
             cached_path = Path(cached_entry.path)
             resolved_cache = cached_path / subpath if subpath else cached_path
+            if select_gguf:
+                resolved_cache = _select_gguf_path(cached_path)
+                if resolved_cache is None:
+                    raise ModelPullError(
+                        404,
+                        "not_found",
+                        f"No .gguf file found in artifact for llamacpp backend ({source_uri}).",
+                        source_uri,
+                    )
             if resolved_cache.exists() and _verify_cached_digests(cached_entry):
                 return {
-                    "path": str(resolved_cache),
+                    "path": str(resolved_cache.resolve()),
                     "cached": True,
                     "source_uri": source_uri,
                 }
@@ -633,6 +674,10 @@ def pull_model(
         #     (repo://name:version/model.gguf), the returned path points at
         #     that file inside the pulled directory.  A subpath that does
         #     not exist in the artifact is a client error (404).
+        #     When GGUF selection applies (llama.cpp + Harbor artifact, no
+        #     subpath), the path points at the largest *.gguf inside the
+        #     pulled directory; an artifact without any .gguf is a client
+        #     error (404) — the intent can never run on llama.cpp.
         if subpath:
             resolved_path = target_dir / subpath
             if not resolved_path.exists():
@@ -641,6 +686,16 @@ def pull_model(
                     404,
                     "not_found",
                     f"Subpath '{subpath}' not found in artifact for {source_uri}.",
+                    source_uri,
+                )
+        elif select_gguf:
+            resolved_path = _select_gguf_path(target_dir)
+            if resolved_path is None:
+                shutil.rmtree(target_dir, ignore_errors=True)
+                raise ModelPullError(
+                    404,
+                    "not_found",
+                    f"No .gguf file found in artifact for llamacpp backend ({source_uri}).",
                     source_uri,
                 )
         else:

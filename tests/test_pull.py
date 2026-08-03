@@ -328,6 +328,165 @@ class TestCacheHit:
 
 
 # ---------------------------------------------------------------------------
+# GGUF selection for llama.cpp + repo:// artifacts (fix/repo-resolution)
+# ---------------------------------------------------------------------------
+
+
+class TestGgufSelection:
+    """llama.cpp + harbor pulls resolve to the largest *.gguf in the artifact.
+
+    Selection applies only when the caller declares backend_type ==
+    "llamacpp" on a harbor (repo://) pull without an explicit subpath.
+    local:// and huggingface:// pulls always stay directories.
+    """
+
+    def _mock_pull_files(self, files: dict[str, bytes]):
+        """Side effect for _pull_harbor that writes the given files."""
+
+        def _side_effect(harbor_ref: str, target_dir: Path, source_uri: str):
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for name, data in files.items():
+                file = target_dir / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(data)
+
+        return _side_effect
+
+    def test_fresh_pull_single_gguf_resolves_to_file(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._mock_pull_files({"model.gguf": b"x" * 1024}),
+        ) as mock_pull:
+            body = _harbor_body(backend_type="llamacpp")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is False
+        assert data["path"].endswith("repo--iris-osl--v3/model.gguf")
+        mock_pull.assert_called_once()
+
+    def test_fresh_pull_multiple_ggufs_picks_largest(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._mock_pull_files(
+                {
+                    "small.gguf": b"s" * 512,
+                    "big.gguf": b"b" * 2048,
+                    "README.md": b"readme",
+                }
+            ),
+        ):
+            body = _harbor_body(backend_type="llamacpp")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["path"].endswith("repo--iris-osl--v3/big.gguf")
+
+    def test_fresh_pull_no_gguf_returns_404(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._mock_pull_files({"config.json": b"{}"}),
+        ):
+            body = _harbor_body(backend_type="llamacpp")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 404
+        assert "No .gguf file found" in resp.json()["detail"]
+
+    def test_backend_type_omitted_keeps_directory(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """No backend_type → no selection (existing behavior unchanged)."""
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._mock_pull_files({"model.gguf": b"x" * 1024}),
+        ):
+            resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["path"].endswith("repo--iris-osl--v3")
+
+    def test_hf_source_with_llamacpp_keeps_directory(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        """huggingface:// artifacts are folders even for llamacpp backend."""
+        with patch(
+            "solar_host.models_manager._pull_huggingface",
+            side_effect=self._mock_pull_files(
+                {"model.gguf": b"x" * 1024, "config.json": b"{}"}
+            ),
+        ):
+            body = _hf_body(backend_type="llamacpp")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["path"].endswith("hf--microsoft--phi-3")
+
+    def test_explicit_subpath_wins_over_selection(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        with patch(
+            "solar_host.models_manager._pull_harbor",
+            side_effect=self._mock_pull_files(
+                {
+                    "small.gguf": b"s" * 512,
+                    "big.gguf": b"b" * 2048,
+                    "nested/model.gguf": b"n" * 1024,
+                }
+            ),
+        ):
+            body = _harbor_body(
+                source_uri="repo://iris-osl:v3/small.gguf", backend_type="llamacpp"
+            )
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        assert resp.json()["path"].endswith("repo--iris-osl--v3/small.gguf")
+
+    def test_cache_hit_llamacpp_resolves_to_largest_gguf(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        ensure_models_dir()
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "small.gguf").write_bytes(b"s" * 512)
+        (slug_dir / "big.gguf").write_bytes(b"b" * 2048)
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
+
+        with patch("solar_host.models_manager._pull_harbor") as mock_pull:
+            body = _harbor_body(backend_type="llamacpp")
+            resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cached"] is True
+        assert data["path"] == str((slug_dir / "big.gguf").resolve())
+        mock_pull.assert_not_called()
+
+    def test_cache_hit_llamacpp_no_gguf_returns_404(
+        self, client: TestClient, _isolated_env: Path
+    ):
+        ensure_models_dir()
+        slug_dir = _isolated_env / "repo--iris-osl--v3"
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "config.json").write_bytes(b"{}")
+        add_manifest_entry(_make_manifest_entry(path=str(slug_dir.resolve())))
+
+        body = _harbor_body(backend_type="llamacpp")
+        resp = client.post("/models/pull", json=body, headers=_headers())
+
+        assert resp.status_code == 404
+        assert "No .gguf file found" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # Post-pull digest verification (D-017)
 # ---------------------------------------------------------------------------
 
@@ -954,9 +1113,9 @@ class TestFailureCleanup:
             resp = client.post("/models/pull", json=_harbor_body(), headers=_headers())
 
         assert resp.status_code == 200
-        assert (
-            removed_before_dl.get("stale_gone") is True
-        ), "Stale directory should have been removed before download started"
+        assert removed_before_dl.get("stale_gone") is True, (
+            "Stale directory should have been removed before download started"
+        )
 
 
 # ---------------------------------------------------------------------------

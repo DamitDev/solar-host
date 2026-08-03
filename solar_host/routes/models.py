@@ -116,6 +116,11 @@ class PullRequest(BaseModel):
     version: str | None = None
     checksum: str | None = None
     metadata: dict | None = None
+    # Declared by solar-control when the pull targets a specific backend
+    # (e.g. "llamacpp" from an intent).  For harbor artifacts it enables
+    # GGUF selection: the returned path resolves to the largest *.gguf
+    # inside the artifact instead of the directory.  None = no selection.
+    backend_type: str | None = None
 
 
 class PullResponse(BaseModel):
@@ -184,6 +189,7 @@ async def pull_model(req: PullRequest) -> PullResponse | JSONResponse:
             version=req.version,
             checksum=req.checksum,
             metadata=req.metadata,
+            backend_type=req.backend_type,
         )
     except ModelPullError as exc:
         return JSONResponse(
